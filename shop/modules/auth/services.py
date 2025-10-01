@@ -1,4 +1,11 @@
-from datetime import datetime, timezone
+import secrets
+import uuid
+from datetime import datetime, timezone, timedelta
+
+from .models_recovery import PasswordReset, EmailVerification
+from .models_session import DeviceSession
+from .models_token import TokenBlocklist
+from ..users.models import User
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from ...core.security import hash_password, verify_password
@@ -61,5 +68,88 @@ def signin(self, payload: dict):
     data = {"user": user_public(user)} | self._tokens_for_user(user)
     return data
 
-class AuthService:
-    pass
+def refresh_access(uid:str):
+    access, _ = issue_tokens(uid)
+    return {"access_token": access}
+
+def signout(user: User, jti: str, ttl_seconds: int = 8 * 3600 ):
+    TokenBlocklist.revoke(user, jti, "access", ttl_seconds)
+    return True
+
+def signout_all(user: User):
+    for s in DeviceSession.objects(user=user, is_revoked=False):
+        s.is_revoked = True
+        if s.refresh_jti:
+            TokenBlocklist.revoke(user, s.refresh_jti, "refresh", 7 * 24 * 3600)
+        s.save()
+    return True
+
+def sessions(user: User):
+    return[{
+        "id": str(s.id),
+        "device_name": s.device_name,
+        "ip": s.ip_address,
+        "last_seen_at": s.last_seen_at.isoformat(),
+        "revoked": s.is_revoked
+    } for s in DeviceSession.objects(user=user).order_by("-last_seen_at")]
+
+def revoke_session(user: User, session_id: str):
+    s = DeviceSession.objects(user=user, id=session_id).first()
+    if not s:
+        raise AppError("Session not found", 404)
+    s.is_revoked = True
+    if s.refresh_jti:
+        TokenBlocklist.revoke(user, s.refresh_jti, "refresh", 7 * 24 * 3600)
+    s.save()
+    return True
+
+def change_password(self, uid, payload: dict):
+    require_fields(payload, "current_password", "new_password")
+    u = self.users.get_by_email(self.users.get_by_id(uid).email) if hasattr(self.users, "get_by_id") else User.objects(id=uid).first()
+    if not u:
+        raise AppError("User not found", 404)
+    if not verify_password(payload["old_password"], u.password_hash):
+        raise AppError("Invalid password", 400)
+    u.password_hash = hash_password(payload["new_password"])
+    u.save()
+    self.signout_all(u)
+    return True
+
+def forgot_password(self, email:str):
+    u = self.users.get_by_email(email)
+    if not u:
+        return True
+    token = uuid.uuid4().hex + secrets.token_hex(8)
+    pr = PasswordReset(user=u, token=token, expires_at = datetime.now(timezone.utc)+timedelta(hours=1)).save()
+    #TODO: send email '...?token=<token>'
+    return True
+
+def reset_password(self, token:str, new_password:str):
+    rec = PasswordReset.objects(token = token, used=False, expires_at__gt=datetime.now(timezone.utc)).first()
+    if not rec:
+        raise AppError("Invalid token", 400)
+    u = rec.user
+    u.password_hash = hash_password(new_password)
+    u.save()
+    rec.used = True
+    rec.save()
+    self.signout_all(u)
+    return True
+
+def send_verify_email(self, email:str):
+    u = self.users.get_by_email(email)
+    if not u: return True
+    token = uuid.uuid4().hex + secrets.token_hex(8)
+    EmailVerification(user=u, token=token, expires_at = datetime.now(timezone.utc)+timedelta(hours=24)).save()
+    #TODO: send email '...?token=<token>'
+    return True
+
+def verify_email(token:str):
+    rec = EmailVerification.objects(token = token, used=False, expires_at__gt=datetime.now(timezone.utc)).first()
+    if not rec:
+        raise AppError("Invalid token", 400)
+    u = rec.user
+    u.is_active = True
+    u.save()
+    rec.verified_at = datetime.now(timezone.utc)
+    return True

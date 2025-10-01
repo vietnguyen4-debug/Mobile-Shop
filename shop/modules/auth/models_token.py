@@ -3,11 +3,12 @@ from datetime import datetime,timezone, timedelta
 from ..users.models import User
 
 class TokenBlocklist(Document):
+    users = ReferenceField(User)
     jti = StringField(required=True, unique=True)
     token_type = StringField(required=True, choices=("access", "refresh"))
     revoked = BooleanField(default=False)
     created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
-    expires_at = DateTimeField(default=lambda: datetime.now(timezone.utc) + timedelta(days=1))
+    expires_at = DateTimeField(required=True)
     user = ReferenceField(User)
 
     meta = {
@@ -19,9 +20,9 @@ class TokenBlocklist(Document):
     }
 
     @classmethod
-    def revoke(cls, jti: str, token_type: str, ttl_seconds):
+    def revoke(cls,user, jti: str, token_type: str, ttl_seconds: int):
         return cls(
-            user = User,
+            user = user,
             jti = jti,
             token_type = token_type,
             revoked = True,
