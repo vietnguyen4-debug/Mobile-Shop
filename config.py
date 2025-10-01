@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 
 class DevConfig:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key') or 'you-will-never-guess'
@@ -8,3 +9,7 @@ class DevConfig:
     MONGODB_PORT = int(os.environ.get("MONGODB_PORT", 27017))
     CACHE_TYPE = "SimpleCache"
     JSON_SORT_KEYS = False
+    JWT_TOKEN_LOCATION = ["headers"]
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=1)
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
+    JWT_ACCESS_TTL_SECONDS = 8*3600
