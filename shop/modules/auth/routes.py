@@ -1,9 +1,8 @@
-from flask import request, current_app
-from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token, get_jwt
-from datetime import timedelta
+from flask import request
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
 from . import bp
-from .services import signup, signin
+from .services import signup, signin, list_sessions, refresh_access
 from ..users.models import User
 from ...core.exceptions import AppError
 from ...core.responses import ok, created, no_content
@@ -21,12 +20,7 @@ def signin():
 @jwt_required(refresh=True)
 def refresh():
     identity = get_jwt_identity()
-    access_token_expires = timedelta(days=1)
-    return {
-        "access_token": create_access_token(
-            identity=identity, expires_delta=access_token_expires
-        )
-    }
+    return ok(refresh_access(identity))
 
 @bp.post("/signout")
 @jwt_required()
@@ -34,7 +28,7 @@ def signout():
     uid = get_jwt_identity()
     jti = get_jwt()["jti"]
     user = User.objects(id=uid).first()
-    signout(user, jti, ttl_seconds=current_app.config.get("JWT_ACCESS_TTL_SECONDS", 8*3600))
+    signout(user, jti)
     return no_content()
 
 @bp.post("/signout-all")
@@ -44,11 +38,11 @@ def signout_all():
     signout_all(user)
     return no_content()
 
-@bp.get("/session")
-def session():
+@bp.get("/sessions")
+def sessions():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
-    return ok(session(user))
+    return ok(list_sessions(user))
 
 @bp.delete("/session/<sid>")
 @jwt_required()
