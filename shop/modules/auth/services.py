@@ -16,7 +16,7 @@ from ..users.mappers import user_public
 from ...core.mailer import send_reset_password, send_verify_email
 
 def signup(payload: dict):
-    require_fields(payload, ["username", "email", "password"])
+    require_fields(payload, "username", "email", "password")
     username = payload["username"].strip()
     email = payload["email"].strip().lower()
     password = payload["password"]
@@ -37,7 +37,7 @@ def signup(payload: dict):
     }
 
 def signin(payload: dict):
-    require_fields(payload, ["email", "password"])
+    require_fields(payload, "email", "password")
     email = payload["email"].strip().lower()
     password = payload["password"]
 
