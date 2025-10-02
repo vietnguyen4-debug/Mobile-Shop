@@ -2,7 +2,7 @@ from flask import request
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
 from . import bp
-from .services import signup, signin, list_sessions, refresh_access
+from .services import *
 from ..users.models import User
 from ...core.exceptions import AppError
 from ...core.responses import ok, created, no_content
