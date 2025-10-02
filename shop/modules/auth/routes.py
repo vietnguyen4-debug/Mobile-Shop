@@ -9,22 +9,24 @@ from ...core.responses import ok, created, no_content
 
 
 @bp.post("/signup")
-def signup():
-    return created(signup(request.get_json() or {}))
+def r_signup():
+    data = request.get_json() or {}
+    return created(signup(data))
 
 @bp.post("/signin")
-def signin():
-    return ok(signin(request.get_json() or {}))
+def r_signin():
+    data = request.get_json() or {}
+    return ok(signin(data))
 
 @bp.post("/refresh")
 @jwt_required(refresh=True)
-def refresh():
+def r_refresh():
     identity = get_jwt_identity()
     return ok(refresh_access(identity))
 
 @bp.post("/signout")
 @jwt_required()
-def signout():
+def r_signout():
     uid = get_jwt_identity()
     jti = get_jwt()["jti"]
     user = User.objects(id=uid).first()
@@ -32,21 +34,21 @@ def signout():
     return no_content()
 
 @bp.post("/signout-all")
-def signout_all():
+def r_signout_all():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
     signout_all(user)
     return no_content()
 
 @bp.get("/sessions")
-def sessions():
+def r_sessions():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
     return ok(list_sessions(user))
 
 @bp.delete("/session/<sid>")
 @jwt_required()
-def revoke_session(sid):
+def r_revoke_session(sid):
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
     revoke_session(user, sid)
@@ -54,13 +56,13 @@ def revoke_session(sid):
 
 @bp.post("/change-password")
 @jwt_required()
-def change_password():
+def r_change_password():
     uid = get_jwt_identity()
     change_password(uid, request.get_json() or {})
     return no_content()
 
 @bp.post("/forgot-password")
-def forgot_password():
+def r_forgot_password():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
     if not email:
@@ -69,7 +71,7 @@ def forgot_password():
     return no_content()
 
 @bp.post("/reset-password")
-def reset_password():
+def r_reset_password():
     data = request.get_json() or {}
     token = data.get("token")
     new_password = data.get("new_password")
@@ -79,7 +81,7 @@ def reset_password():
     return no_content()
 
 @bp.post("/send-verify-email")
-def send_verify_email():
+def r_send_verify_email():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
     if not email:
@@ -88,7 +90,7 @@ def send_verify_email():
     return no_content()
 
 @bp.post("/verify-email")
-def verify_email():
+def r_verify_email():
     data = request.get_json() or {}
     token = data.get("token")
     if not token:
