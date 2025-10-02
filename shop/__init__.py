@@ -20,9 +20,9 @@ def create_app(config_object=config.DevConfig):
 
 
     @jwt.token_in_blocklist_loader
-    def _is_token_revoked(jwt_payload):
-        jti = jwt_payload["jti"]
-        return  TokenBlocklist.objects(jti=jti, revoked=True).first() is not None
+    def _is_token_revoked(_jwt_header, jwt_payload):
+        jti = jwt_payload.get("jti")
+        return TokenBlocklist.objects(jti=jti, revoked=True).first() is not None
 
 
     @app.get("/api/health")
