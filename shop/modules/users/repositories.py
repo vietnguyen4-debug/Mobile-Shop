@@ -58,7 +58,7 @@ def list_addresses(uid: str) -> Optional[list[dict]]:
 def add_address(uid: str, address_line: str, city: str, is_default: bool = False) -> Optional[dict]:
     u = _get_user(uid)
     if not u: return None
-    addr = Address(address_line=address_line, city=city, user=u, is_default=is_default)
+    addr = Address(address_line=address_line, city=city, is_default=is_default)
     if is_default:
         _ensure_single_default(u, addr)
     u.addresses.append(addr)

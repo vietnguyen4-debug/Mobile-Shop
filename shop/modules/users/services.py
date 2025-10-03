@@ -25,7 +25,7 @@ def s_list_addresses(uid:str):
     return out
 
 def s_add_address(uid:str, payload: dict):
-    require_fields(payload, ["address_line", "city"])
+    require_fields(payload, "address_line", "city")
     out = add_address(uid, payload["address_line"], payload["city"], payload.get("is_default"))
     if out is None: raise AppError("User not found", 404)
     return out
