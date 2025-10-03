@@ -1,12 +1,12 @@
 import secrets
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from flask import current_app
 
 from .models_recovery import PasswordReset, EmailVerification
-from .models_session import DeviceSession
-from .models_token import TokenBlocklist
+from .repositories import block_access, revoke_all_sessions, create_password_reset, mark_password_reset_used, \
+    create_email_verification, mark_email_verification_used, list_sessions, revoke_sessions
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from ...core.security import hash_password, verify_password
@@ -15,7 +15,7 @@ from ..users.repositories import *
 from ..users.mappers import user_public
 from ...core.mailer import send_reset_password, send_verify_email
 
-def signup(payload: dict):
+def s_signup(payload: dict):
     require_fields(payload, "username", "email", "password")
     username = payload["username"].strip()
     email = payload["email"].strip().lower()
@@ -36,7 +36,7 @@ def signup(payload: dict):
         "refresh_token": refresh_token,
     }
 
-def signin(payload: dict):
+def s_signin(payload: dict):
     require_fields(payload, "email", "password")
     email = payload["email"].strip().lower()
     password = payload["password"]
@@ -57,43 +57,35 @@ def signin(payload: dict):
         "refresh_token": refresh_token,
     }
 
-def refresh_access(uid: str):
+def s_refresh_access(uid: str):
     access, _ = issue_tokens(uid, access=1, refresh=7)
     return {"access_token": access}
 
-def signout(user: User, jti: str):
+def s_signout(user: User, jti: str):
     ttl = int(current_app.config.get("JWT_ACCESS_TTL_SECONDS", 8*3600))
-    TokenBlocklist.revoke(user, jti,"access", ttl)
+    block_access(user, jti, ttl)
     return True
 
-def signout_all(user: User):
-    for s in DeviceSession.objects(user=user, is_revoked=False):
-        s.is_revoked = True
-        if s.refresh_jti:
-            TokenBlocklist.revoke(user, s.refresh_jti, "refresh", 7*24*3600)
-        s.save()
+def s_signout_all(user: User):
+    revoke_all_sessions(user)
     return True
 
-def list_sessions(user: User):
+def s_list_sessions(user: User):
     return[{
         "id": str(s.id),
         "device_info": s.device_info,
         "ip": s.ip_address,
         "last_seen_at": s.last_seen_at.isoformat(),
         "revoked": s.is_revoked,
-    } for s in DeviceSession.objects(user=user, is_revoked=False)]
+    } for s in list_sessions(user)]
 
-def revoke_session(user: User, sid: str):
-    s = DeviceSession.objects(user=user, id=sid).first()
-    if not s:
-        raise AppError("Session not found", 404)
-    s.is_revoked = True
-    if s.refresh_jti:
-        TokenBlocklist.revoke(user, s.refresh_jti, "refresh", 7*24*3600)
-    s.save()
+def s_revoke_session(user: User, sid: str):
+    ok = revoke_sessions(user, sid)
+    if not ok:
+        raise AppError("Invalid session", 404)
     return True
 
-def change_password(uid: str, payload: dict):
+def s_change_password(uid: str, payload: dict):
     require_fields(payload, ["old_password", "new_password"])
     user = User.objects(id=uid).first()
     if not user:
@@ -101,40 +93,41 @@ def change_password(uid: str, payload: dict):
     if not verify_password(payload["old_password"], user.password_hash):
         raise AppError("Invalid old password", 400)
     user.password_hash = hash_password(payload["new_password"])
-    signout_all(user)
+    s_signout_all(user)
     user.save()
 
-def forgot_password(email: str):
+def s_forgot_password(email: str):
     user = get_by_email(email)
     if not user:
         return True
 
     token = uuid.uuid4().hex + secrets.token_hex(16)
-    PasswordReset(user=user, token=token, expires_at = datetime.now(timezone.utc) + timedelta(hours=1)).save()
-    send_reset_password(email, token)
+    create_password_reset(user, token, ttl_hours=1)
+    send_reset_password(user.email, token)
     return True
 
-def reset_password(token: str, new_password: str):
+def s_reset_password(token: str, new_password: str):
     reset = PasswordReset.objects(token=token, expires_at__gt=datetime.now(timezone.utc)).first()
     if not reset:
         raise AppError("Invalid token or expired token", 400)
 
     user = reset.user
     user.password_hash = hash_password(new_password)
-    reset.used = True
     reset.save()
-    signout_all(user)
+    mark_password_reset_used(reset)
+    user.save()
+    s_signout_all(user)
     return True
 
-def send_verify(email: str):
+def s_send_verify(email: str):
     user = get_by_email(email)
     if not user: return True
     token = uuid.uuid4().hex + secrets.token_hex(16)
-    EmailVerification(user=user, token=token, expires_at = datetime.now(timezone.utc) + timedelta(hours=1)).save()
-    send_verify_email(email, token)
+    create_email_verification(user, token, ttl_hours=24)
+    send_verify_email(user.email, token)
     return True
 
-def verify_email(token: str):
+def s_verify_email(token: str):
     email_verification = EmailVerification.objects(token=token, expires_at__gt=datetime.now(timezone.utc)).first()
     if not email_verification:
         raise AppError("Invalid token or expired token", 400)
@@ -142,7 +135,7 @@ def verify_email(token: str):
     user = email_verification.user
     user.is_active = True
     user.save()
-    email_verification.verified_at = datetime.now(timezone.utc)
-    email_verification.save()
+    mark_email_verification_used(email_verification)
+    s_signout_all(user)
     return True
 
