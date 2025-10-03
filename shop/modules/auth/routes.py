@@ -1,28 +1,28 @@
 from flask import request
-from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+from flask_jwt_extended import jwt_required
 
 from . import bp
 from .services import *
 from ..users.models import User
-from ...core.exceptions import AppError
 from ...core.responses import ok, created, no_content
+from ...core.rbac import *
 
 
 @bp.post("/signup")
 def r_signup():
     data = request.get_json() or {}
-    return created(signup(data))
+    return created(s_signup(data))
 
 @bp.post("/signin")
 def r_signin():
     data = request.get_json() or {}
-    return ok(signin(data))
+    return ok(s_signin(data))
 
 @bp.post("/refresh")
 @jwt_required(refresh=True)
 def r_refresh():
     identity = get_jwt_identity()
-    return ok(refresh_access(identity))
+    return ok(s_refresh_access(identity))
 
 @bp.post("/signout")
 @jwt_required()
@@ -30,35 +30,35 @@ def r_signout():
     uid = get_jwt_identity()
     jti = get_jwt()["jti"]
     user = User.objects(id=uid).first()
-    signout(user, jti)
+    s_signout(user, jti)
     return no_content()
 
 @bp.post("/signout-all")
 def r_signout_all():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
-    signout_all(user)
+    s_signout_all(user)
     return no_content()
 
 @bp.get("/sessions")
 def r_sessions():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
-    return ok(list_sessions(user))
+    return ok(s_list_sessions(user))
 
 @bp.delete("/session/<sid>")
 @jwt_required()
 def r_revoke_session(sid):
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
-    revoke_session(user, sid)
+    s_revoke_session(user, sid)
     return no_content()
 
 @bp.post("/change-password")
 @jwt_required()
 def r_change_password():
     uid = get_jwt_identity()
-    change_password(uid, request.get_json() or {})
+    s_change_password(uid, request.get_json() or {})
     return no_content()
 
 @bp.post("/forgot-password")
@@ -66,8 +66,8 @@ def r_forgot_password():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
     if not email:
-        raise AppError("Invalid email", 400)
-    forgot_password(email)
+        raise AppError("Missing email", 400)
+    s_forgot_password(email)
     return no_content()
 
 @bp.post("/reset-password")
@@ -77,16 +77,17 @@ def r_reset_password():
     new_password = data.get("new_password")
     if not token or not new_password:
         raise AppError("Invalid token or new password", 400)
-    reset_password(token, new_password)
+    s_reset_password(token, new_password)
     return no_content()
 
 @bp.post("/send-verify-email")
 def r_send_verify_email():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
+    token = data.get("token")
     if not email:
-        raise AppError("Invalid email", 400)
-    send_verify_email(email)
+        raise AppError("Missing email", 400)
+    send_verify_email(token, email)
     return no_content()
 
 @bp.post("/verify-email")
@@ -94,6 +95,6 @@ def r_verify_email():
     data = request.get_json() or {}
     token = data.get("token")
     if not token:
-        raise AppError("Invalid token", 400)
-    verify_email(token)
+        raise AppError("Missing token", 400)
+    s_verify_email(token)
     return no_content()
