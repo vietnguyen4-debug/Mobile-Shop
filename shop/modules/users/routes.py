@@ -14,6 +14,7 @@ def r_get_me():
 
 @bp.get("/users/<user_id>")
 @jwt_required()
+@self_or_admin("user_id")
 def r_get_user_public(user_id):
     return ok(s_get_user_public(user_id))
 
