@@ -16,7 +16,7 @@ class User(Document, mixins.AuditMixin):
     password_hash = StringField(required=True)
     first_name = StringField(max_length=50)
     last_name = StringField(max_length=50)
-    role = StringField(default="user")
+    role = StringField(default="user", choices=("admin", "user"))
     phone = StringField(max_length=15)
     avatar = StringField()
     last_login_at = DateTimeField()
