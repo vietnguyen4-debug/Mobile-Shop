@@ -1,13 +1,36 @@
 from functools import wraps
 from flask import g
-from .responses import error
+from ..core.exceptions import AppError
+from flask_jwt_extended import get_jwt_identity, get_jwt
 
-def require_role(*roles):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if g.user.role not in roles:
-                return error("Permission denied", status_code=403)
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator()
+ROLES = ["admin", "user"]
+
+def _current_role() -> str:
+    return get_jwt().get("role", "user")
+
+def is_admin():
+    return _current_role() == "admin"
+
+def roles_required(*roles):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not is_admin() and _current_role() not in roles:
+                raise AppError("Permission denied", 403)
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+def self_or_admin(param: str):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            uid = str(get_jwt_identity())
+            target = str(kwargs.get(param))
+            if uid == target or is_admin():
+                return f(*args, **kwargs)
+            raise AppError("Permission denied", 403)
+        return decorated_function
+    return decorator
+
+
