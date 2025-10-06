@@ -15,4 +15,6 @@ class EmailVerification(Document):
     token       = StringField(required=True, unique=True)
     expires_at  = DateTimeField(required=True)
     verified_at = DateTimeField()
+    new_email = EmailField()
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
     meta        = {"collection": "email_verification", "indexes": ["token", "expires_at"]}
