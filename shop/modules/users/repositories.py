@@ -1,6 +1,7 @@
 from .models import User, Address
 from typing import Optional
 from .mappers import user_public, address_public
+from bson import ObjectId
 
 
 def get_by_email(email: str):
@@ -23,7 +24,9 @@ def create_user(username: str, email: str, password_hash: str, role: str = "user
     return User(username=username, email=email, password_hash=password_hash, role=role).save()
 
 def _get_user(uid: str) -> Optional[User]:
-    return User.objects(id=uid).first()
+    try: oid = ObjectId(uid)
+    except Exception: return None
+    return User.objects(id=oid).first()
 
 def _find_addr(u: User, addr_id: str) -> Optional[Address]:
     return next((a for a in u.addresses if a.id == addr_id), None)
@@ -94,3 +97,6 @@ def set_default(uid:str, addr_id:str) -> Optional[bool]:
     _ensure_single_default(u, target)
     u.save()
     return True
+
+def email_exists(email: str) -> bool:
+    return User.objects(email=email).first() is not None

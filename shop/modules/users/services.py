@@ -1,3 +1,8 @@
+import secrets
+import uuid
+
+from .repositories import _get_user
+from ..auth.repositories import create_email_verification
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from .repositories import *
@@ -46,4 +51,25 @@ def s_set_default(uid:str, addr_id: str):
     ok = set_default(uid, addr_id)
     if ok is None: raise AppError("User not found", 404)
     if not ok: raise AppError("Address not found", 404)
+    return True
+
+def request_change_email(uid: str, payload: dict):
+    require_fields(payload, "new_email")
+    new_email = payload["new_email"].strip().lower()
+
+    u = _get_user(uid)
+    if not u: raise AppError("User not found", 404)
+
+    if new_email == (u.email or "").lower():
+        raise AppError("New email must be different", 422)
+
+    if email_exists(new_email):
+        raise AppError("Email already used", 409)
+
+    token = uuid.uuid4().hex + secrets.token_hex(8)
+    create_email_verification(u, token, ttl_hours=24, new_email=new_email)
+
+    from ...core.mailer import send_verify_email
+    send_verify_email(new_email, token)
+
     return True

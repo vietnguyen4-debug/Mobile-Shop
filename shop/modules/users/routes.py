@@ -56,3 +56,10 @@ def r_delete_address(user_id, address_id):
 def r_set_default(user_id, address_id):
     s_set_default(user_id, address_id)
     return no_content()
+
+@bp.post("/users/<user_id>/change-email")
+@jwt_required()
+@self_or_admin("user_id")
+def r_change_email(user_id):
+    request_change_email(user_id, request.get_json() or {})
+    return no_content()
