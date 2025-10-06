@@ -50,8 +50,11 @@ def mark_password_reset_used(rec: PasswordReset):
     rec.used = True
     rec.save()
 
-def create_email_verification(user: User, token: str, ttl_hours = 24) -> EmailVerification:
-    return EmailVerification(user=user, token=token, expires_at = datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).save()
+def create_email_verification(user: User, token: str, ttl_hours=24, new_email: str | None = None) -> EmailVerification:
+    return EmailVerification(
+        user=user, token=token, new_email=new_email,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
+    ).save()
 
 def get_valid_email_verification(token: str) -> Optional[EmailVerification]:
     return EmailVerification.objects(token=token, expires_at__gt=datetime.now(timezone.utc)).first()

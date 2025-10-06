@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 
 from flask import current_app
 
-from .models_recovery import PasswordReset, EmailVerification
+from .models_recovery import PasswordReset
 from .repositories import block_access, revoke_all_sessions, create_password_reset, mark_password_reset_used, \
-    create_email_verification, mark_email_verification_used, list_sessions, revoke_sessions
+    create_email_verification, mark_email_verification_used, list_sessions, revoke_sessions, \
+    get_valid_email_verification
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from ...core.security import hash_password, verify_password
@@ -128,14 +129,19 @@ def s_send_verify(email: str):
     return True
 
 def s_verify_email(token: str):
-    email_verification = EmailVerification.objects(token=token, expires_at__gt=datetime.now(timezone.utc)).first()
-    if not email_verification:
-        raise AppError("Invalid token or expired token", 400)
-
-    user = email_verification.user
-    user.is_active = True
-    user.save()
-    mark_email_verification_used(email_verification)
-    s_signout_all(user)
+    rec = get_valid_email_verification(token)
+    if not rec:
+        raise AppError("Invalid or expired token", 400)
+    u = rec.user
+    if rec.new_email:
+        from ..users.repositories import email_exists
+        if email_exists(rec.new_email):
+            raise AppError("Email already used", 409)
+        u.email = rec.new_email
+        u.email_verified = True
+    else:
+        u.email_verified = True
+    u.save()
+    mark_email_verification_used(rec)
     return True
 
