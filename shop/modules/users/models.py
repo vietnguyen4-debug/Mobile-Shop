@@ -13,6 +13,7 @@ class Address(EmbeddedDocument):
 class User(Document, mixins.AuditMixin):
     username = StringField(required=True, unique=True)
     email = EmailField(required=True, unique=True)
+    email_verified = BooleanField(default=False)
     password_hash = StringField(required=True)
     first_name = StringField(max_length=50)
     last_name = StringField(max_length=50)
@@ -23,11 +24,13 @@ class User(Document, mixins.AuditMixin):
     addresses = ListField(EmbeddedDocumentField(Address))
 
     meta = {
-        "collection": "users",
+        "collection": "user",
         "indexes": [
             {"fields": ["username"], "unique": True},
             {"fields": ["email"], "unique": True},
             {"fields": ["-created_at"]},
+            {"fields": ["role"]},
+            {"fields": ["is_active"]},
         ]
     }
 
