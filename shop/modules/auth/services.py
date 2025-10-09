@@ -30,7 +30,7 @@ def s_signup(payload: dict):
     user = create_user(username, email, hash_password(password))
     user.last_login_at = datetime.now(timezone.utc)
 
-    access_token, refresh_token = issue_tokens(str(user.id))
+    access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
     return {
         "user": user_public(user),
         "access_token": access_token,
@@ -51,7 +51,7 @@ def s_signin(payload: dict):
         raise AppError("Account is not active", 403)
 
     user.last_login_at = datetime.now(timezone.utc)
-    access_token, refresh_token = issue_tokens(str(user.id))
+    access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
     return {
         "user": user_public(user),
         "access_token": access_token,
