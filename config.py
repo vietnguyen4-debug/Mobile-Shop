@@ -13,3 +13,11 @@ class DevConfig:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=1)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     JWT_ACCESS_TTL_SECONDS = 8*3600
+
+    CORS_ALLOW_ORIGINS = "*"
+    CORS_ALLOW_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    CORS_ALLOW_HEADERS = "Content-Type, Authorization"
+    CORS_ALLOW_CREDENTIALS = "true"
+    CORS_MAX_AGE = "3600"
+
+    MAX_CONTENT_LENGTH = 8 * 1024 * 1024
