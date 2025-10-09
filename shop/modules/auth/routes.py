@@ -86,10 +86,9 @@ def r_reset_password():
 def r_send_verify_email():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
-    token = data.get("token")
     if not email:
         raise AppError("Missing email", 400)
-    send_verify_email(token, email)
+    s_send_verify(email)
     return no_content()
 
 @bp.post("/verify-email")
