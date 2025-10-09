@@ -2,7 +2,6 @@ from flask import Flask
 
 import config
 from .extensions import db, jwt, cors, cache
-from .core.exceptions import register_errors
 from .core.middlewares import register_middlewares
 from .modules.auth.models_token import TokenBlocklist
 from .modules.auth.routes import bp as auth_bp
@@ -19,11 +18,12 @@ def create_app(config_object=config.DevConfig):
     cors.init_app(app)
     cache.init_app(app)
 
-    register_errors(app)
-    register_middlewares(app)
+
     app.register_blueprint(auth_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(catalogs_bp)
+
+    register_middlewares(app)
 
 
     @jwt.token_in_blocklist_loader

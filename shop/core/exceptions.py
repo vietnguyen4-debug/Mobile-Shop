@@ -1,50 +1,25 @@
-from flask import jsonify
+# core/exceptions.py
 
 class AppError(Exception):
-    def __init__(self, message, status_code=400, detail=None):
-        super().__init__()
+    def __init__(
+        self,
+        message: str,
+        status: int = 400,
+        code=None,
+        extra: dict | None = None,
+        status_code: int | None = None,
+        detail: dict | None = None,
+    ):
+        super().__init__(message)
         self.message = message
-        self.status_code = status_code
-        self.detail = detail or {}
+        self.status = int(status_code) if status_code is not None else int(status)
+        self.code = code
+        self.extra = extra if extra is not None else (detail or {})
 
-def register_errors(app):
-    @app.errorhandler(AppError)
-    def _handle_app_error(error: AppError):
-        return jsonify({
-            "data": None,
-            "error": {
-                "code": error.status_code,
-                "message": error.message,
-                "detail": error.detail
-            }
-        })
+    @property
+    def status_code(self) -> int:
+        return self.status
 
-    @app.errorhandler(404)
-    def _404_(_):
-        return jsonify({
-            "data": None,
-            "error": {
-                "code": 404,
-                "message": "Not found"
-            }
-        }), 404
-
-    @app.errorhandler(500)
-    def _500_(_):
-        return jsonify({
-            "data": None,
-            "error": {
-                "code": 500,
-                "message": "Internal server error"
-            }
-        }), 500
-
-    @app.errorhandler(405)
-    def _405_(_):
-        return jsonify({
-            "data": None,
-            "error": {
-                "code": 405,
-                "message": "Method not allowed"
-            }
-        }), 405
+    @property
+    def detail(self) -> dict:
+        return self.extra
