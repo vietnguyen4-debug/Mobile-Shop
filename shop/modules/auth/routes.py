@@ -34,6 +34,7 @@ def r_signout():
     return no_content()
 
 @bp.post("/signout-all")
+@jwt_required()
 def r_signout_all():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
@@ -41,6 +42,7 @@ def r_signout_all():
     return no_content()
 
 @bp.get("/sessions")
+@jwt_required()
 def r_sessions():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
