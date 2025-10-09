@@ -51,55 +51,55 @@ def r_product_suggest():
     return ok(s_product_suggest(kw, int(limit)))
 
 #-----ADMIN-------
-@bp.post("/categories")
+@bp.post("/admin/categories")
 @jwt_required()
 @roles_required("admin")
 def r_category_create():
     return created(s_category_create(request.get_json() or {}))
 
-@bp.put("/categories/<slug_or_id>")
+@bp.put("/admin/categories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_category_update(slug_or_id):
     return ok(s_category_update(slug_or_id, request.get_json() or {}))
 
-@bp.delete("/categories/<slug_or_id>")
+@bp.delete("/admin/categories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_category_delete(slug_or_id):
     return ok(s_category_delete(slug_or_id))
 
-@bp.post("/subcategories")
+@bp.post("/admin/subcategories")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_create():
     return created(s_subcategory_create(request.get_json() or {}))
 
-@bp.put("/subcategories/<slug_or_id>")
+@bp.put("/admin/subcategories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_update(slug_or_id):
     return ok(s_subcategory_update(slug_or_id, request.get_json() or {}))
 
-@bp.delete("/subcategories/<slug_or_id>")
+@bp.delete("/admin/subcategories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_delete(slug_or_id):
     return ok(s_subcategory_delete(slug_or_id))
 
-@bp.post("/products")
+@bp.post("/admin/products")
 @jwt_required()
 @roles_required("admin")
 def r_product_create():
     return created(s_product_create(request.get_json() or {}))
 
-@bp.put("/products/<slug_or_id>")
+@bp.put("/admin/products/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_product_update(slug_or_id):
     return ok(s_product_update(slug_or_id, request.get_json() or {}))
 
-@bp.delete("/products/<slug_or_id>")
+@bp.delete("/admin/products/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_product_delete(slug_or_id):
