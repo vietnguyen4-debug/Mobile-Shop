@@ -34,6 +34,7 @@ def r_signout():
     return no_content()
 
 @bp.post("/signout-all")
+@jwt_required()
 def r_signout_all():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
@@ -41,6 +42,7 @@ def r_signout_all():
     return no_content()
 
 @bp.get("/sessions")
+@jwt_required()
 def r_sessions():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
@@ -84,10 +86,9 @@ def r_reset_password():
 def r_send_verify_email():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
-    token = data.get("token")
     if not email:
         raise AppError("Missing email", 400)
-    send_verify_email(token, email)
+    s_send_verify(email)
     return no_content()
 
 @bp.post("/verify-email")
