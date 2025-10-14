@@ -99,3 +99,8 @@ def r_verify_email():
         raise AppError("Missing token", 400)
     s_verify_email(token)
     return no_content()
+
+@bp.get("/debug/claims")
+@jwt_required()
+def r_debug_claims():
+    return ok(get_jwt())
