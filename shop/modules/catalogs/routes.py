@@ -8,127 +8,127 @@ from .services import *
 #------PUBLIC-------
 @bp.get("/categories")
 def r_cat_list():
-    return ok(s_category_list())
+    return ok(s_category_list(), "Categories listed successfully.")
 
 @bp.get("/categories/<slug_or_id>")
 def r_cat_get(slug_or_id):
-    return ok(s_category_get(slug_or_id))
+    return ok(s_category_get(slug_or_id), "Category retrieved successfully.")
 
 @bp.get("/subcategories")
 def r_sub_list_by_cat():
-    return ok(s_subcategory_list_by_category(request.args.get("category_id")))
+    return ok(s_subcategory_list_by_category(request.args.get("category_id")), "Subcategories listed successfully.")
 
 @bp.get("/subcategories/<slug_or_id>")
 def r_sub_get(slug_or_id):
-    return ok(s_subcategory_get(slug_or_id))
+    return ok(s_subcategory_get(slug_or_id), "Subcategory retrieved successfully.")
 
 @bp.get("/products")
 def r_product_list():
     page = request.args.get("page", 1)
     limit = request.args.get("limit", 20)
-    return ok(s_product_list(page, limit))
+    return ok(s_product_list(page, limit), "Products listed successfully.")
 
 @bp.get("/products/by-sub/<sub_id>")
 def r_products_by_sub(sub_id):
     page = request.args.get("page", 1)
     limit = request.args.get("limit", 20)
-    return ok(s_product_list_by_sub(sub_id, page, limit, active_only=True))
+    return ok(s_product_list_by_sub(sub_id, page, limit, active_only=True), "Products listed successfully.")
 
 @bp.get("/products/<slug_or_id>")
 def r_product_get(slug_or_id):
-    return ok(s_product_get(slug_or_id))
+    return ok(s_product_get(slug_or_id), "Product retrieved successfully.")
 
 @bp.get("/home/suggest")
 def r_home_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_product_suggest(kw, int(limit)))
+    return ok(s_product_suggest(kw, int(limit)), "Home suggest products listed successfully.")
 
 @bp.get("/product/suggest")
 def r_product_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_product_suggest(kw, int(limit)))
+    return ok(s_product_suggest(kw, int(limit)), "Product suggest products listed successfully.")
 
 #-----ADMIN-------
 @bp_admin.post("/categories")
 @jwt_required()
 @roles_required("admin")
 def r_category_create():
-    return created(s_category_create(request.get_json() or {}))
+    return created(s_category_create(request.get_json() or {}), "Category created successfully.")
 
 @bp_admin.put("/categories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_category_update(slug_or_id):
-    return ok(s_category_update(slug_or_id, request.get_json() or {}))
+    return ok(s_category_update(slug_or_id, request.get_json() or {}), "Category updated successfully.")
 
 @bp_admin.delete("/categories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_category_delete(slug_or_id):
-    return ok(s_category_delete(slug_or_id))
+    return ok(s_category_delete(slug_or_id), "Category deleted successfully.")
 
 @bp_admin.post("/subcategories")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_create():
-    return created(s_subcategory_create(request.get_json() or {}))
+    return created(s_subcategory_create(request.get_json() or {}), "Subcategory created successfully.")
 
 @bp_admin.put("/subcategories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_update(slug_or_id):
-    return ok(s_subcategory_update(slug_or_id, request.get_json() or {}))
+    return ok(s_subcategory_update(slug_or_id, request.get_json() or {}), "Subcategory updated successfully.")
 
 @bp_admin.delete("/subcategories/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_delete(slug_or_id):
-    return ok(s_subcategory_delete(slug_or_id))
+    return ok(s_subcategory_delete(slug_or_id), "Subcategory deleted successfully.")
 
 @bp_admin.post("/products")
 @jwt_required()
 @roles_required("admin")
 def r_product_create():
-    return created(s_product_create(request.get_json() or {}))
+    return created(s_product_create(request.get_json() or {}), "Product created successfully.")
 
 @bp_admin.put("/products/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_product_update(slug_or_id):
-    return ok(s_product_update(slug_or_id, request.get_json() or {}))
+    return ok(s_product_update(slug_or_id, request.get_json() or {}), "Product updated successfully.")
 
 @bp_admin.delete("/products/<slug_or_id>")
 @jwt_required()
 @roles_required("admin")
 def r_product_delete(slug_or_id):
-    return ok(s_product_delete(slug_or_id))
+    return ok(s_product_delete(slug_or_id), "Product deleted successfully.")
 
 @bp_admin.get("/products/<pid>/keywords")
 @jwt_required()
 @roles_required("admin")
 def r_admin_keywords_list(pid):
-    return ok(s_keywords_list(pid))
+    return ok(s_keywords_list(pid), "Keywords listed successfully.")
 
 @bp_admin.post("/products/<pid>/keywords")
 @jwt_required()
 @roles_required("admin")
 def r_admin_keyword_upsert(pid):
-    return created(s_keyword_upsert(pid, request.get_json() or {}))
+    return created(s_keyword_upsert(pid, request.get_json() or {}), "Keyword created successfully.")
 
 @bp_admin.put("/products/<pid>/keywords")
 @jwt_required()
 @roles_required("admin")
 def r_admin_keywords_replace(pid):
-    return ok(s_keywords_replace(pid, request.get_json() or {}))
+    return ok(s_keywords_replace(pid, request.get_json() or {}), "Keywords replaced successfully.")
 
 @bp_admin.delete("/keywords/<kid>")
 @jwt_required()
 @roles_required("admin")
 def r_admin_keyword_delete(kid):
     s_keyword_delete(kid)
-    return no_content()
+    return no_content("Keyword deleted successfully.")
 
 
 
