@@ -7,7 +7,7 @@ from .modules.auth.models_token import TokenBlocklist
 from .modules.auth.routes import bp as auth_bp
 from .modules.users.routes import bp as users_bp
 from .modules.catalogs.routes import bp as catalogs_bp
-
+from .modules.catalogs.routes import bp_admin as catalogs_admin_bp
 
 def create_app(config_object=config.DevConfig):
     app = Flask(__name__)
@@ -22,6 +22,7 @@ def create_app(config_object=config.DevConfig):
     app.register_blueprint(auth_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(catalogs_bp)
+    app.register_blueprint(catalogs_admin_bp)
 
     register_middlewares(app)
 
