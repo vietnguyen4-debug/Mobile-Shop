@@ -34,7 +34,10 @@ def r_list_addresses(user_id):
 @jwt_required()
 @self_or_admin("user_id")
 def r_add_address(user_id):
-    return created(s_add_address(user_id, request.get_json() or {}))
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        raise AppError("Body must be a JSON object", 400)
+    return created(s_add_address(user_id, data))
 
 @bp.put("/users/<user_id>/addresses/<address_id>")
 @jwt_required()
