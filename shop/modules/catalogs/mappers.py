@@ -28,17 +28,30 @@ def sub_public(s):
 def product_public(p):
     primary = None
     if p.media:
-        ms = sorted(p.media, key=lambda x: (not x.is_primary, x.order))
+        ms = sorted(p.media, key=lambda m: (not bool(getattr(m, "is_primary", False)),
+                                            getattr(m, "order", 0) or 0))
         primary = _media_public(ms[0]) if ms else None
+
+    media_sorted = sorted(p.media, key=lambda m: (not bool(getattr(m, "is_primary", False)),
+                                                  getattr(m, "order", 0) or 0))
+    specs_sorted = sorted(p.specs, key=lambda sp: (getattr(sp, "order", 0) or 0,
+                                                   getattr(sp, "group", "") or "",
+                                                   getattr(sp, "key", "") or ""))
+
     return {
-        "id": str(p.id), "name": p.name, "slug": p.slug,
+        "id": str(p.id),
+        "name": p.name,
+        "slug": p.slug,
         "description": p.description,
-        "base_price": p.price,                # giá gốc; effective price tính ở pricing
+        "base_price": p.price,
         "category_id": str(p.category.id) if p.category else None,
         "subcategory_id": str(p.subcategory.id) if p.subcategory else None,
-        "media": [_media_public(m) for m in sorted(p.media, key=lambda x: (not x.is_primary, x.order))],
+        "media": [_media_public(m) for m in media_sorted],
         "primary_media": primary,
-        "specs": [_spec_public(s) for s in sorted(p.specs, key=lambda x: (s.order, s.group or "", s.key))],
-        "is_active": p.is_active, "is_orphan": p.is_orphan, "orphan_reason": p.orphan_reason,
-        "created_at": p.created_at.isoformat(), "updated_at": p.updated_at.isoformat()
+        "specs": [_spec_public(sp) for sp in specs_sorted],
+        "is_active": p.is_active,
+        "is_orphan": p.is_orphan,
+        "orphan_reason": p.orphan_reason,
+        "created_at": p.created_at.isoformat(),
+        "updated_at": p.updated_at.isoformat(),
     }

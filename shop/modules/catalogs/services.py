@@ -3,7 +3,7 @@ from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
 from .mappers import *
-
+from .models import Media, Spec
 # ---- CATEGORY ----
 def s_category_create(payload: dict) -> dict:
     require_fields(payload, "name")
@@ -71,6 +71,7 @@ def s_subcategory_create(payload: dict) -> dict:
         "name": name,
         "slug": slug,
         "icon": payload.get("icon"),
+        "category": cat,
         "description": payload.get("description"),
     })
 
@@ -95,16 +96,27 @@ def s_subcategory_update(slug_or_id: str, payload: dict) -> dict:
     data = {}
     if "name" in payload:
         data["name"] = payload["name"].strip()
+    new_cat = s.category
     if "category_id" in payload:
+        if payload["category_id"] is None:
+            raise AppError("Category cannot be null", 400)
         cat_oid = parse_oid(payload["category_id"])
-        if not cat_oid: raise AppError("Category not found", 404)
-        cat = cat_get_by_id(cat_oid)
-        if not cat: raise AppError("Category not found", 404)
-        data["category_id"] = cat
+        if not cat_oid:
+            raise AppError("Category not found", 404)
+        new_cat = cat_get_by_id(cat_oid)
+        if not new_cat:
+            raise AppError("Category not found", 404)
+        data["category"] = new_cat
 
-    data["slug"] = slugify(data.get("name"), prefix=cat.slug)
-    for k in ("icon", "description"):
-        if k in payload: data[k] = payload[k]
+    if "name" in data or ("category" in data and data["category"] != s.category):
+        base_name = data.get("name", s.name)
+        cat_for_slug = data.get("category", new_cat)
+        data["slug"] = slugify(base_name, prefix=cat_for_slug.slug)
+        ensure_unique_slug(SubCategory, data["slug"])
+
+    for k in ("icon", "description", "hot"):
+        if k in payload:
+            data[k] = payload[k]
 
     s = sub_update(s, data)
     return sub_public(s)
@@ -116,6 +128,31 @@ def s_subcategory_delete(slug_or_id: str) -> None:
     sub_delete(s)
 
 # -----PRODUCT-----
+
+def _build_media(items):
+    out = []
+    for m in items or []:
+        out.append(Media(
+            id=m.get("id"),
+            kind=m.get("kind") or "image",
+            url=m.get("url"),
+            alt=m.get("alt"),
+            is_primary=bool(m.get("is_primary", False)),
+            order=m.get("order", 0) or 0,
+        ))
+    return out
+
+def _build_specs(items):
+    out = []
+    for s in items or []:
+        out.append(Spec(
+            id=s.get("id"),
+            group=s.get("group"),
+            key=s.get("key"),
+            value=s.get("value"),
+            order=s.get("order", 0) or 0,
+        ))
+    return out
 
 def s_product_create(payload: dict) -> dict:
     require_fields(payload, "name", "price")
@@ -131,10 +168,14 @@ def s_product_create(payload: dict) -> dict:
         sub_oid = parse_oid(payload["subcategory_id"])
         if not sub_oid: raise AppError("Subcategory not found", 404)
         sub = sub_get_by_id(sub_oid)
-    if cat and sub and str(sub.category.id) != cat.id:
+    if cat and sub and sub.category.id != cat.id:
         raise AppError("Subcategory not in category", 400)
-    slug = slugify(name, prefix = (sub.slug if sub else (cat.slug if cat else None)))
+    slug = slugify(name)
     ensure_unique_slug(Product, slug)
+
+    media = _build_media(payload.get("media"))
+    specs = _build_specs(payload.get("specs"))
+
     p = prod_insert({
         "name": name,
         "slug": slug,
@@ -142,6 +183,8 @@ def s_product_create(payload: dict) -> dict:
         "description": payload.get("description"),
         "category": cat,
         "subcategory": sub,
+        "media": media,
+        "specs": specs,
         "is_active": payload.get("is_active", True),
         "is_orphan": payload.get("is_orphan", False),
         "orphan_reason": payload.get("orphan_reason", None),
