@@ -14,3 +14,4 @@ class DevConfig:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     JWT_ACCESS_TTL_SECONDS = 8*3600
     MAX_CONTENT_LENGTH = 8 * 1024 * 1024
+    ERROR_HTTP_200 = True

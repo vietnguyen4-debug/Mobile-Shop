@@ -4,6 +4,8 @@ from ...core.utils import *
 from .repositories import *
 from .mappers import *
 from .models import Media, Spec
+from bson import ObjectId
+
 # ---- CATEGORY ----
 def s_category_create(payload: dict) -> dict:
     require_fields(payload, "name")
@@ -35,13 +37,12 @@ def s_category_update(slug_or_id: str, payload: dict) -> dict:
     if not c: raise AppError("Category not found", 404)
 
     data = {}
-    if "name" in payload:
+    if "name" in payload and payload["name"]:
         name = payload["name"].strip()
         if name and name != c.name and Category.objects(name=name).first():
             raise AppError("Name already used", 409)
         data["name"] = name
-
-    data["slug"] = slugify(data.get("name"))
+        data["slug"] = slugify(name)
 
     for k in ("icon", "description", "hot"):
         if k in payload: data[k] = payload[k]
@@ -50,7 +51,6 @@ def s_category_update(slug_or_id: str, payload: dict) -> dict:
     return cat_public(c)
 
 def s_category_delete(slug_or_id: str) -> None:
-    from bson import ObjectId
     c = cat_get_by_slug(slug_or_id) or cat_get_by_id(ObjectId(slug_or_id))
     if not c: raise AppError("Category not found", 404)
     mark_products_orphan_by_category(c.id)
@@ -157,7 +157,12 @@ def _build_specs(items):
 def s_product_create(payload: dict) -> dict:
     require_fields(payload, "name", "price")
     name = payload["name"].strip()
-    price = float(payload["price"])
+    try:
+        price = float(payload["price"])
+    except Exception:
+        raise AppError("Price must be a number", 400, name="INVALID_PRICE")
+    if price < 0:
+        raise AppError("Price must be positive", 400)
     cat = sub = None
     if "category_id" in payload:
         cat_oid = parse_oid(payload["category_id"])
@@ -176,6 +181,12 @@ def s_product_create(payload: dict) -> dict:
     media = _build_media(payload.get("media"))
     specs = _build_specs(payload.get("specs"))
 
+    if len(media) > MAX_MEDIA:
+        raise AppError(f"Too many media items (max {MAX_MEDIA})", 400)
+    if len(specs) > MAX_SPECS:
+        raise AppError(f"Too many specs items (max {MAX_SPECS})", 400)
+
+
     p = prod_insert({
         "name": name,
         "slug": slug,
@@ -192,7 +203,6 @@ def s_product_create(payload: dict) -> dict:
     return product_public(p)
 
 def s_product_get(slug_or_id: str) -> dict:
-    from bson import ObjectId
     p = prod_get_by_slug(slug_or_id) or prod_get_by_id(ObjectId(slug_or_id))
     if not p: raise AppError("Product not found", 404)
     return product_public(p)
@@ -211,12 +221,12 @@ def s_product_list_by_sub(sub_id, page, limit, *, active_only = True) -> dict:
     return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
 
 def s_product_update(slug_or_id: str, payload: dict) -> dict:
-    from bson import ObjectId
     p = prod_get_by_slug(slug_or_id) or prod_get_by_id(ObjectId(slug_or_id))
     if not p: raise AppError("Product not found", 404)
 
     data = {}
-    if "name" in payload:
+    need_new_slug = False
+    if "name" in payload and payload["name"]:
         data["name"] = payload["name"].strip()
     if "price" in payload:
         price = float(payload["price"])
@@ -241,11 +251,16 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
             if not sub_oid: raise AppError("Subcategory not found", 404)
             sub = sub_get_by_id(sub_oid)
             if not sub: raise AppError("Subcategory not found", 404)
-    if cat and sub and str(sub.category.id) != cat.id:
+    if cat and sub and sub.category.id != cat.id:
         raise AppError("Subcategory not in category", 400)
 
     data["category"] = cat; data["subcategory"] = sub
-    data["slug"] = slugify(data.get("name"), prefix = (sub.slug if sub else (cat.slug if cat else None)))
+
+    if need_new_slug or ("category_id" in payload) or ("subcategory_id" in payload):
+        base = data.get("name", p.name)
+        prefix = sub.slug if sub else (cat.slug if cat else None)
+        data["slug"] = slugify(base, prefix=prefix)
+
     for k in ("description", "is_active"):
         if k in payload: data[k] = payload[k]
 
@@ -261,7 +276,6 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
     return product_public(p)
 
 def s_product_delete(slug_or_id: str) -> None:
-    from bson import ObjectId
     p = prod_get_by_slug(slug_or_id) or prod_get_by_id(ObjectId(slug_or_id))
     if not p: raise AppError("Product not found", 404)
     prod_delete(p)
