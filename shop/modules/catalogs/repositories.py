@@ -88,9 +88,9 @@ def pk_list_by_product(pid: str) -> list[ProductKeyword]:
     oid = parse_oid(pid)
     return ProductKeyword.objects(id=oid).first() if oid else []
 
-def pk_get_by_id(kid: str) -> Optional[ProductKeyword]:
+def pk_get_by_id(kid: str) -> list[ProductKeyword]:
     oid = parse_oid(kid)
-    return ProductKeyword.objects(id=oid).first() if oid else None
+    return list(ProductKeyword.objects(id=oid) if oid else None)
 
 def pk_find(product: Product, keyword: str) -> Optional[ProductKeyword]:
     return ProductKeyword.objects(product=product, keyword=keyword).first()
