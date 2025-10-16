@@ -42,15 +42,16 @@ def r_product_get(slug_or_id):
 def r_home_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_product_suggest(kw, int(limit)), "Home suggest products listed successfully.")
+    return ok(s_keyword_suggest(kw, int(limit)), "Home suggest products listed successfully.")
 
 @bp.get("/product/suggest")
 def r_product_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_product_suggest(kw, int(limit)), "Product suggest products listed successfully.")
+    return ok(s_keyword_suggest(kw, int(limit)), "Product suggest products listed successfully.")
 
-#-----ADMIN-------
+#=============ADMIN==============
+#-------CATEGORY----------
 @bp_admin.post("/categories")
 @jwt_required()
 @roles_required("admin")
@@ -69,6 +70,7 @@ def r_category_update(slug_or_id):
 def r_category_delete(slug_or_id):
     return ok(s_category_delete(slug_or_id), "Category deleted successfully.")
 
+#-------SUBCATEGORY----------
 @bp_admin.post("/subcategories")
 @jwt_required()
 @roles_required("admin")
@@ -87,6 +89,7 @@ def r_subcategory_update(slug_or_id):
 def r_subcategory_delete(slug_or_id):
     return ok(s_subcategory_delete(slug_or_id), "Subcategory deleted successfully.")
 
+#-------PRODUCT----------
 @bp_admin.post("/products")
 @jwt_required()
 @roles_required("admin")
@@ -105,11 +108,86 @@ def r_product_update(slug_or_id):
 def r_product_delete(slug_or_id):
     return ok(s_product_delete(slug_or_id), "Product deleted successfully.")
 
+#---------MEDIA---------
+@bp_admin.post("/products/<slug_or_id>/media")
+@jwt_required()
+@roles_required("admin")
+def r_media_add(slug_or_id):
+    return created(s_media_add(slug_or_id, request.get_json() or {}), "Media added successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/media/<media_id>")
+@jwt_required()
+@roles_required("admin")
+def r_media_update(slug_or_id, media_id):
+    return ok(s_media_update(slug_or_id, media_id, request.get_json() or {}), "Media updated successfully.")
+
+@bp_admin.delete("/products/<slug_or_id>/media/<media_id>")
+@jwt_required()
+@roles_required("admin")
+def r_media_delete(slug_or_id, media_id):
+    s_media_delete(slug_or_id, media_id)
+    return no_content("Media deleted successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/media/reorder")
+@jwt_required()
+@roles_required("admin")
+def r_media_reorder(slug_or_id):
+    body = request.get_json() or {}
+    order = body.get("order") or body.get("ids") or []
+    return ok(s_media_reorder(slug_or_id, order), "Media reordered successfully.")
+
+@bp_admin.post("/products/<slug_or_id>/media/<media_id>/set-primary")
+@jwt_required()
+@roles_required("admin")
+def r_media_set_primary(slug_or_id, media_id):
+    return ok(s_media_set_primary(slug_or_id, media_id), "Primary media set successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/media/replace")
+@jwt_required()
+@roles_required("admin")
+def r_media_replace(slug_or_id):
+    return ok(s_media_replace(slug_or_id, request.get_json() or {}), "Media replaced successfully.")
+
+#--------SPECS-----------
+@bp_admin.post("/products/<slug_or_id>/specs")
+@jwt_required()
+@roles_required("admin")
+def r_spec_add(slug_or_id):
+    return created(s_specs_add(slug_or_id, request.get_json() or {}), "Spec added successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/specs/<spec_id>")
+@jwt_required()
+@roles_required("admin")
+def r_spec_update(slug_or_id, spec_id):
+    return ok(s_specs_update(slug_or_id, spec_id, request.get_json() or {}), "Spec updated successfully.")
+
+@bp_admin.delete("/products/<slug_or_id>/specs/<spec_id>")
+@jwt_required()
+@roles_required("admin")
+def r_spec_delete(slug_or_id, spec_id):
+    s_specs_delete(slug_or_id, spec_id)
+    return no_content("Spec deleted successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/specs/reorder")
+@jwt_required()
+@roles_required("admin")
+def r_specs_reorder(slug_or_id):
+    body = request.get_json() or {}
+    order = body.get("order") or body.get("ids") or []
+    return ok(s_specs_reorder(slug_or_id, order), "Specs reordered successfully.")
+
+@bp_admin.put("/products/<slug_or_id>/specs/replace")
+@jwt_required()
+@roles_required("admin")
+def r_specs_replace(slug_or_id):
+    return ok(s_specs_replace(slug_or_id, request.get_json() or {}), "Specs replaced successfully.")
+
+#-------KEYWORD----------
 @bp_admin.get("/products/<pid>/keywords")
 @jwt_required()
 @roles_required("admin")
 def r_admin_keywords_list(pid):
-    return ok(s_keywords_list(pid), "Keywords listed successfully.")
+    return ok(s_keyword_list(pid), "Keywords listed successfully.")
 
 @bp_admin.post("/products/<pid>/keywords")
 @jwt_required()
@@ -121,13 +199,13 @@ def r_admin_keyword_upsert(pid):
 @jwt_required()
 @roles_required("admin")
 def r_admin_keywords_replace(pid):
-    return ok(s_keywords_replace(pid, request.get_json() or {}), "Keywords replaced successfully.")
+    return ok(s_keyword_bulk_replace(pid, request.get_json() or {}), "Keywords replaced successfully.")
 
-@bp_admin.delete("/keywords/<kid>")
+@bp_admin.delete("/products/<pid>/keywords/<kid>")
 @jwt_required()
 @roles_required("admin")
-def r_admin_keyword_delete(kid):
-    s_keyword_delete(kid)
+def r_admin_keyword_delete(pid, kid):
+    s_keyword_delete(pid, kid)
     return no_content("Keyword deleted successfully.")
 
 
