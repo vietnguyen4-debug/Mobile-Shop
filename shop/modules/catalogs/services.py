@@ -6,7 +6,7 @@ from ...core.utils import *
 from .repositories import *
 from .mappers import *
 from .models import Media, Spec
-from.service_helpers import *
+from .service_helpers import *
 # ---- CATEGORY ----
 def s_category_create(payload: dict) -> dict:
     require_fields(payload, "name")
@@ -124,18 +124,50 @@ def s_subcategory_delete(slug_or_id: str) -> None:
 # -----PRODUCT-----
 def _build_media(items: List[dict]) -> List[Media]:
     out: List[Media] = []
-    for m in items or []:
+    pending: List[Tuple[dict, int]] = []
+    max_order = -1
+
+    for index, m in enumerate(items or []):
         url = (m.get("url") or "").strip()
         if not url:
             raise AppError("Media url is required", 400, name="INVALID_MEDIA")
+
+        raw_order = m.get("order")
+        has_explicit_order = raw_order is not None and f"{raw_order}".strip() != ""
+        order_value = 0
+
+        if has_explicit_order:
+            try:
+                order_value = int(raw_order)
+            except (TypeError, ValueError):
+                has_explicit_order = False
+            else:
+                max_order = max(max_order, order_value)
+        if not has_explicit_order:
+            pending.append((m, index))
+            continue
+
         out.append(Media(
             id=m.get("id"),
             kind=(m.get("kind") or "image"),
             url=url,
             alt=m.get("alt"),
             is_primary=bool(m.get("is_primary", False)),
-            order=int(m.get("order") or 0),
+            order=order_value,
         ))
+
+    next_order = max_order + 1 if max_order >= 0 else 0
+
+    for m, _ in sorted(pending, key=lambda item: item[1]):
+        out.append(Media(
+            id=m.get("id"),
+            kind=(m.get("kind") or "image"),
+            url=(m.get("url") or "").strip(),
+            alt=m.get("alt"),
+            is_primary=bool(m.get("is_primary", False)),
+            order=next_order,
+        ))
+        next_order += 1
 
     if out and not any(getattr(x, "is_primary", False) for x in out):
         sorted(out, key=lambda x: (getattr(x, "order", 0) or 0))[0].is_primary = True
@@ -143,6 +175,9 @@ def _build_media(items: List[dict]) -> List[Media]:
         not bool(getattr(x, "is_primary", False)),
         getattr(x, "order", 0) or 0
     ))
+
+    for idx, media in enumerate(out):
+        media.order = idx
     return out
 
 def _build_specs(items: List[dict]) -> List[Spec]:
@@ -469,7 +504,7 @@ def s_keyword_delete(slug_or_id: str, keyword_id: str) -> None:
     rec = ProductKeyword.objects(id=oid, product=p).first()
     if not rec:
         raise AppError("Keyword not found", 404, name="KEYWORD_NOT_FOUND")
-    repo.pk_delete(rec)
+    pk_delete(rec)
 
 def s_keyword_suggest(keyword: str, limit:int = 20) -> dict:
     items = pk_suggest(keyword, limit = limit) or []
