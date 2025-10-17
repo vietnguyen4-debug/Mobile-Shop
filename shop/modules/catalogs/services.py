@@ -1,6 +1,10 @@
 from typing import List
 
+from bson.errors import InvalidId
+from mongoengine import ValidationError as MongoValidationError
 from .mappers import _media_public, _spec_public
+from .service_helpers import  _parse_and_get_subcategory, \
+    _validate_category_subcategory_relation, _safe_get_category_by_id, _safe_parse_oid
 from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
@@ -12,114 +16,191 @@ def s_category_create(payload: dict) -> dict:
     require_fields(payload, "name")
     name = payload["name"].strip()
     slug = slugify(name)
-    ensure_unique_slug(Category, slug)
-    if Category.objects(slug=slug).first(): raise AppError("Name already used", 409, name = "INVALID_CATEGORY")
-    c = cat_insert({
-        "name": name,
-        "slug": slug,
-        "icon": payload.get("icon"),
-        "description": payload.get("description"),
-        "hot": bool(payload.get("hot", False)),
-    })
-    return cat_public(c)
+
+    try:
+        ensure_unique_slug(Category, slug)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to validate slug: {str(e)}", 500, name="DATABASE_ERROR")
+
+    try:
+        if Category.objects(slug=slug).first():
+            raise AppError("Name already used", 409, name="INVALID_CATEGORY")
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to check category existence: {str(e)}", 500, name="DATABASE_ERROR")
+
+    try:
+        c = cat_insert({
+            "name": name,
+            "slug": slug,
+            "icon": payload.get("icon"),
+            "description": payload.get("description"),
+            "hot": bool(payload.get("hot", False)),
+        })
+        return cat_public(c)
+    except Exception as e:
+        raise AppError(f"Failed to create category: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_category_get(slug_or_id: str) -> dict:
-    c = find_by_slug_or_id("category", slug_or_id)
-    return cat_public(c)
+    try:
+        c = find_by_slug_or_id("category", slug_or_id)
+        return cat_public(c)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to retrieve category: {str(e)}", 500, name="DATABASE_ERROR")
 
 def s_category_list() -> dict:
-    return {
-        "items": [ cat_public(c) for c in cat_list_all()]
-    }
+    try:
+        return {"items": [cat_public(c) for c in cat_list_all()]}
+    except Exception as e:
+        raise AppError(f"Failed to list categories: {str(e)}", 500, name="DATABASE_ERROR")
 
 def s_category_update(slug_or_id: str, payload: dict) -> dict:
-    c = find_by_slug_or_id("category", slug_or_id)
+    try:
+        c = find_by_slug_or_id("category", slug_or_id)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to find category: {str(e)}", 500, name="DATABASE_ERROR")
 
     data = {}
     if "name" in payload and payload["name"]:
         name = payload["name"].strip()
-        if name and name != c.name and Category.objects(name=name).first():
-            raise AppError("Name already used", 409, name = "INVALID_CATEGORY")
+        try:
+            if name and name != c.name and Category.objects(name=name).first():
+                raise AppError("Name already used", 409, name="INVALID_CATEGORY")
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError(f"Failed to check name uniqueness: {str(e)}", 500, name="DATABASE_ERROR")
         data["name"] = name
         data["slug"] = slugify(name)
 
     for k in ("icon", "description", "hot"):
-        if k in payload: data[k] = payload[k]
+        if k in payload:
+            data[k] = payload[k]
 
-    c = cat_update(c, data)
-    return cat_public(c)
+    try:
+        c = cat_update(c, data)
+        return cat_public(c)
+    except Exception as e:
+        raise AppError(f"Failed to update category: {str(e)}", 500, name="DATABASE_ERROR")
 
 def s_category_delete(slug_or_id: str) -> None:
-    c = find_by_slug_or_id("category", slug_or_id)
-    mark_products_orphan_by_category(c.id)
-    cat_delete(c)
+    try:
+        c = find_by_slug_or_id("category", slug_or_id)
+        mark_products_orphan_by_category(c.id)
+        cat_delete(c)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to delete category: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 # ----SUBCATEGORY-----
 def s_subcategory_create(payload: dict) -> dict:
     require_fields(payload, "name", "category_id")
     name = payload["name"].strip()
-    cat_oid = parse_oid(payload["category_id"])
-    if not cat_oid: raise AppError("Category not found", 404, name = "INVALID_CATEGORY")
-    cat = cat_get_by_id(cat_oid)
-    if not cat: raise AppError("Category not found", 404, name = "INVALID_CATEGORY")
-    slug = payload.get("slug") or slugify(name, prefix=cat.slug)
-    ensure_unique_slug(SubCategory, slug)
-    s = sub_insert({
-        "name": name,
-        "slug": slug,
-        "icon": payload.get("icon"),
-        "category": cat,
-        "description": payload.get("description"),
-    })
 
-    return sub_public(s)
+    cat = _safe_get_category_by_id(payload["category_id"])
+    slug = payload.get("slug") or slugify(name, prefix=cat.slug)
+
+    try:
+        ensure_unique_slug(SubCategory, slug)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to validate slug: {str(e)}", 500, name="DATABASE_ERROR")
+
+    try:
+        s = sub_insert({
+            "name": name,
+            "slug": slug,
+            "icon": payload.get("icon"),
+            "category": cat,
+            "description": payload.get("description"),
+        })
+        return sub_public(s)
+    except Exception as e:
+        raise AppError(f"Failed to create subcategory: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_subcategory_get(slug_or_id: str) -> dict:
-    s = find_by_slug_or_id("subcategory", slug_or_id)
-    return sub_public(s)
+    try:
+        s = find_by_slug_or_id("subcategory", slug_or_id)
+        return sub_public(s)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to retrieve subcategory: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_subcategory_list_by_category(category_id: str) -> dict:
-    cat_oid = parse_oid(category_id)
-    if not cat_oid: raise AppError("Subcategory not found", 404, name = "INVALID_CATEGORY")
-    return {
-        "items": [ sub_public(s) for s in sub_list_by_category(cat_oid) ]
-    }
+    cat_oid = _safe_parse_oid(category_id, "Category")
+
+    try:
+        return {"items": [sub_public(s) for s in sub_list_by_category(cat_oid)]}
+    except Exception as e:
+        raise AppError(f"Failed to list subcategories: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_subcategory_update(slug_or_id: str, payload: dict) -> dict:
-    s = find_by_slug_or_id("subcategory", slug_or_id)
+    try:
+        s = find_by_slug_or_id("subcategory", slug_or_id)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to find subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
     data = {}
     if "name" in payload:
         data["name"] = payload["name"].strip()
+
     new_cat = s.category
     if "category_id" in payload:
         if payload["category_id"] is None:
-            raise AppError("Category cannot be null", 400, name = "INVALID_CATEGORY")
-        cat_oid = parse_oid(payload["category_id"])
-        if not cat_oid:
-            raise AppError("Category not found", 404, name = "INVALID_CATEGORY")
-        new_cat = cat_get_by_id(cat_oid)
-        if not new_cat:
-            raise AppError("Category not found", 404, name = "INVALID_CATEGORY")
+            raise AppError("Category cannot be null", 400, name="INVALID_CATEGORY")
+
+        new_cat = _safe_get_category_by_id(payload["category_id"])
         data["category"] = new_cat
 
     if "name" in data or ("category" in data and data["category"] != s.category):
         base_name = data.get("name", s.name)
         cat_for_slug = data.get("category", new_cat)
         data["slug"] = slugify(base_name, prefix=cat_for_slug.slug)
-        ensure_unique_slug(SubCategory, data["slug"])
+        try:
+            ensure_unique_slug(SubCategory, data["slug"])
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError(f"Failed to validate slug: {str(e)}", 500, name="DATABASE_ERROR")
 
     for k in ("icon", "description", "hot"):
         if k in payload:
             data[k] = payload[k]
 
-    s = sub_update(s, data)
-    return sub_public(s)
+    try:
+        s = sub_update(s, data)
+        return sub_public(s)
+    except Exception as e:
+        raise AppError(f"Failed to update subcategory: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_subcategory_delete(slug_or_id: str) -> None:
-    s = find_by_slug_or_id("subcategory", slug_or_id)
-    mark_products_orphan_by_subcategory(s.id)
-    sub_delete(s)
+    try:
+        s = find_by_slug_or_id("subcategory", slug_or_id)
+        mark_products_orphan_by_subcategory(s.id)
+        sub_delete(s)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to delete subcategory: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 # -----PRODUCT-----
 def _build_media(items: List[dict]) -> List[Media]:
@@ -199,131 +280,183 @@ def _build_specs(items: List[dict]) -> List[Spec]:
     return out
 
 def _normalize_media_embedded(p: Product) -> Product:
-    items = [{
-        "id": m.id, "kind": m.kind, "url": m.url, "alt": m.alt,
-        "is_primary": bool(getattr(m, "is_primary", False)),
-        "order": int(getattr(m, "order", 0) or 0),
-    } for m in (p.media or [])]
-    p.media = _build_media(items)
-    return p.save()
+    try:
+        items = [{
+            "id": m.id, "kind": m.kind, "url": m.url, "alt": m.alt,
+            "is_primary": bool(getattr(m, "is_primary", False)),
+            "order": int(getattr(m, "order", 0) or 0),
+        } for m in (p.media or [])]
+        p.media = _build_media(items)
+        return p.save()
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to normalize media: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def _normalize_specs_embedded(p: Product) -> Product:
-    items = [{
-        "id": s.id, "group": s.group, "key": s.key,
-        "value": s.value, "order": int(getattr(s, "order", 0) or 0),
-    } for s in (p.specs or [])]
-    p.specs = _build_specs(items)
-    return p.save()
+    try:
+        items = [{
+            "id": s.id, "group": s.group, "key": s.key,
+            "value": s.value, "order": int(getattr(s, "order", 0) or 0),
+        } for s in (p.specs or [])]
+        p.specs = _build_specs(items)
+        return p.save()
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to normalize specs: {str(e)}", 500, name="DATABASE_ERROR")
+
+
 
 def s_product_create(payload: dict) -> dict:
     require_fields(payload, "name", "price")
     name = payload["name"].strip()
     try:
         price = float(payload["price"])
-    except Exception:
-        raise AppError("Price must be a number", 400, name="INVALID_PRICE")
+    except (ValueError, TypeError) as e:
+        raise AppError(f"Price must be a valid number: {str(e)}", 400, name="INVALID_PRICE")
+
     if price < 0:
         raise AppError("Price must be positive", 400, name="INVALID_PRICE")
+
     cat = sub = None
     if "category_id" in payload:
-        cat_oid = parse_oid(payload["category_id"])
-        if not cat_oid: raise AppError("Category not found", 404, name="INVALID_CATEGORY")
-        cat = cat_get_by_id(cat_oid)
-        if not cat: raise AppError("Category not found", 404, name ="INVALID_CATEGORY")
-    if "subcategory_id" in payload:
-        sub_oid = parse_oid(payload["subcategory_id"])
-        if not sub_oid: raise AppError("Subcategory not found", 404, name="INVALID_SUBCATEGORY")
-        if not cat:
-            raise AppError(
-                "Category required for subcategory", 400, name="INVALID_CATEGORY_OR_SUBCATEGORY"
-            )
-        sub = sub_get_by_id(sub_oid)
-    if cat and sub and sub.category.id != cat.id:
-        raise AppError("Subcategory not in category", 400, name="INVALID_CATEGORY_OR_SUBCATEGORY")
-    slug = slugify(name)
-    ensure_unique_slug(Product, slug)
+        cat = _safe_get_category_by_id(payload["category_id"])
 
-    media = _build_media(payload.get("media"))
-    specs = _build_specs(payload.get("specs"))
+    if "subcategory_id" in payload:
+        sub = _parse_and_get_subcategory(payload["subcategory_id"], cat)
+
+    _validate_category_subcategory_relation(cat, sub)
+
+    slug = slugify(name)
+    try:
+        ensure_unique_slug(Product, slug)
+    except Exception as e:
+        raise AppError(f"Failed to validate slug uniqueness: {str(e)}", 500, name="DATABASE_ERROR")
+
+    try:
+        media = _build_media(payload.get("media"))
+        specs = _build_specs(payload.get("specs"))
+    except (ValueError, TypeError, KeyError) as e:
+        raise AppError(f"Invalid media or specs format: {str(e)}", 400, name="INVALID_FORMAT")
 
     if len(media) > MAX_MEDIA:
         raise AppError(f"Too many media items (max {MAX_MEDIA})", 400, name="INVALID_MEDIA")
     if len(specs) > MAX_SPECS:
         raise AppError(f"Too many specs items (max {MAX_SPECS})", 400, name="INVALID_SPECS")
 
+    try:
+        p = prod_insert({
+            "name": name,
+            "slug": slug,
+            "price": price,
+            "description": payload.get("description"),
+            "category": cat,
+            "subcategory": sub,
+            "media": media,
+            "specs": specs,
+            "is_active": payload.get("is_active", True),
+            "is_orphan": payload.get("is_orphan", False),
+            "orphan_reason": payload.get("orphan_reason", None),
+        })
+        return product_public(p)
+    except MongoValidationError as e:
+        raise AppError(f"Database validation error: {str(e)}", 400, name="VALIDATION_ERROR")
+    except Exception as e:
+        raise AppError(f"Failed to create product: {str(e)}", 500, name="DATABASE_ERROR")
 
-    p = prod_insert({
-        "name": name,
-        "slug": slug,
-        "price": price,
-        "description": payload.get("description"),
-        "category": cat,
-        "subcategory": sub,
-        "media": media,
-        "specs": specs,
-        "is_active": payload.get("is_active", True),
-        "is_orphan": payload.get("is_orphan", False),
-        "orphan_reason": payload.get("orphan_reason", None),
-    })
-    return product_public(p)
+
 
 def s_product_get(slug_or_id: str) -> dict:
-    p = find_by_slug_or_id("product", slug_or_id)
-    return product_public(p)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        return product_public(p)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to retrieve product: {str(e)}", 500, name="DATABASE_ERROR")
+
+
 
 def s_product_list(page, limit) -> dict:
-    p, l = parse_pagination(page, limit)
-    items, total = prod_list_all(p, l)
-    return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+    try:
+        p, l = parse_pagination(page, limit)
+    except (ValueError, TypeError) as e:
+        raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
 
-def s_product_list_by_sub(sub_id, page, limit, *, active_only = True) -> dict:
-    p, l = parse_pagination(page, limit)
-    sub_oid = parse_oid(sub_id)
+    try:
+        items, total = prod_list_all(p, l)
+        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+    except Exception as e:
+        raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
+
+
+def s_product_list_by_sub(sub_id, page, limit, *, active_only=True) -> dict:
+    try:
+        p, l = parse_pagination(page, limit)
+    except (ValueError, TypeError) as e:
+        raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
+
+    try:
+        sub_oid = parse_oid(sub_id)
+    except (InvalidId, Exception):
+        return {"items": [], "total": 0, "page": p, "limit": l}
+
     if not sub_oid:
         return {"items": [], "total": 0, "page": p, "limit": l}
-    items, total = prod_list_by_sub(sub_oid, p, l, active_only = active_only)
-    return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+
+    try:
+        items, total = prod_list_by_sub(sub_oid, p, l, active_only=active_only)
+        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+    except Exception as e:
+        raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_product_update(slug_or_id: str, payload: dict) -> dict:
-    p = find_by_slug_or_id("product", slug_or_id)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to find product: {str(e)}", 500, name="DATABASE_ERROR")
 
     data = {}
     need_new_slug = False
     if "name" in payload and payload["name"]:
         data["name"] = payload["name"].strip()
+
     if "price" in payload:
-        price = float(payload["price"])
-        if price < 0: raise AppError("Price must be positive", 400, name="INVALID_PRICE")
+        try:
+            price = float(payload["price"])
+        except (ValueError, TypeError) as e:
+            raise AppError(f"Price must be a valid number: {str(e)}", 400, name="INVALID_PRICE")
+
+        if price < 0:
+            raise AppError("Price must be positive", 400, name="INVALID_PRICE")
         data["price"] = price
 
-    cat = p.category; sub = p.subcategory
+    cat = p.category
+    sub = p.subcategory
+
     if "category_id" in payload:
         if payload["category_id"] is None:
             cat = None
         else:
-            cat_oid = parse_oid(payload["category_id"])
-            if not cat_oid: raise AppError("Category not found", 404, name="INVALID_CATEGORY")
-            cat = cat_get_by_id(cat_oid)
-            if not cat: raise AppError("Category not found", 404, name="INVALID_CATEGORY")
+            cat = _safe_get_category_by_id(payload["category_id"])
             need_new_slug = True
 
     if "subcategory_id" in payload:
         if payload["subcategory_id"] is None:
             sub = None
         else:
-            sub_oid = parse_oid(payload["subcategory_id"])
-            if not sub_oid: raise AppError("Subcategory not found", 404, name="INVALID_SUBCATEGORY")
-            if not cat:
-                raise AppError(
-                    "Category required for subcategory", 400, name="INVALID_CATEGORY_OR_SUBCATEGORY"
-                )
-            sub = sub_get_by_id(sub_oid)
-            if not sub: raise AppError("Subcategory not found", 404, name="INVALID_SUBCATEGORY")
+            sub = _parse_and_get_subcategory(payload["subcategory_id"], cat)
             need_new_slug = True
-    if cat and sub and sub.category.id != cat.id:
-        raise AppError("Subcategory not in category", 400, name="INVALID_CATEGORY_OR_SUBCATEGORY")
 
-    data["category"] = cat; data["subcategory"] = sub
+    _validate_category_subcategory_relation(cat, sub)
+
+    data["category"] = cat
+    data["subcategory"] = sub
 
     if need_new_slug or ("category_id" in payload) or ("subcategory_id" in payload):
         base = data.get("name", p.name)
@@ -331,7 +464,8 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
         data["slug"] = slugify(base, prefix=prefix)
 
     for k in ("description", "is_active"):
-        if k in payload: data[k] = payload[k]
+        if k in payload:
+            data[k] = payload[k]
 
     if data["category"] is None or data["subcategory"] is None:
         data["is_orphan"] = True
@@ -341,29 +475,61 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
         data["is_orphan"] = False
         data["orphan_reason"] = None
 
-    p = prod_update(p, data)
-    return product_public(p)
+    try:
+        p = prod_update(p, data)
+        return product_public(p)
+    except MongoValidationError as e:
+        raise AppError(f"Database validation error: {str(e)}", 400, name="VALIDATION_ERROR")
+    except Exception as e:
+        raise AppError(f"Failed to update product: {str(e)}", 500, name="DATABASE_ERROR")
+
+
 
 def s_product_delete(slug_or_id: str) -> None:
-    p = find_by_slug_or_id("product", slug_or_id)
-    prod_delete(p)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        prod_delete(p)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to delete product: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 #------MEDIA-------
-def s_media_list(slug_or_id: str) ->dict:
-    p = find_by_slug_or_id("product", slug_or_id)
-    p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+def s_media_list(slug_or_id: str) -> dict:
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        p = _normalize_media_embedded(p)
+        return {"items": [_media_public(m) for m in p.media]}
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to list media: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_media_add(slug_or_id: str, payload: dict):
     require_fields(payload, "kind", "url")
-    p = find_by_slug_or_id("product", slug_or_id)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to find product: {str(e)}", 500, name="DATABASE_ERROR")
+
     if not isinstance(p, Product):
         raise AppError("Product not found", 404, name="INVALID_PRODUCT")
     if len(p.media) >= MAX_MEDIA:
         raise AppError(f"Too many media items (max {MAX_MEDIA})", 400, name="INVALID_MEDIA")
-    p = media_upsert(p, payload)
-    p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+
+    try:
+        p = media_upsert(p, payload)
+        p = _normalize_media_embedded(p)
+        return {"items": [_media_public(m) for m in p.media]}
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to add media: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_media_update(slug_or_id: str, media_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -379,11 +545,17 @@ def s_media_update(slug_or_id: str, media_id: str, payload: dict) -> dict:
 
 
 def s_media_delete(slug_or_id: str, media_id: str) -> None:
-    p = find_by_slug_or_id("product", slug_or_id)
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    media_delete(p, media_id)
-    _normalize_media_embedded(p)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        if not isinstance(p, Product):
+            raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+        media_delete(p, media_id)
+        _normalize_media_embedded(p)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to delete media: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_media_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -418,9 +590,15 @@ def s_media_set_primary(slug_or_id: str, media_id: str) -> dict:
 
 #------SPECS--------
 def s_specs_list(slug_or_id: str) -> dict:
-    p = find_by_slug_or_id("product", slug_or_id)
-    p = _normalize_specs_embedded(p)
-    return {"items": [_spec_public(s) for s in p.specs]}
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        p = _normalize_specs_embedded(p)
+        return {"items": [_spec_public(s) for s in p.specs]}
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to list specs: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_specs_add(slug_or_id: str, payload: dict):
     require_fields(payload, "group", "key")
@@ -446,11 +624,17 @@ def s_specs_update(slug_or_id: str, spec_id: str, payload: dict) -> dict:
     return {"items": [_spec_public(s) for s in p.specs]}
 
 def s_specs_delete(slug_or_id: str, spec_id: str) -> None:
-    p = find_by_slug_or_id("product", slug_or_id)
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    spec_delete(p, spec_id)
-    _normalize_specs_embedded(p)
+    try:
+        p = find_by_slug_or_id("product", slug_or_id)
+        if not isinstance(p, Product):
+            raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+        spec_delete(p, spec_id)
+        _normalize_specs_embedded(p)
+    except AppError:
+        raise
+    except Exception as e:
+        raise AppError(f"Failed to delete spec: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_specs_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -520,9 +704,21 @@ def s_keyword_delete(slug_or_id: str, keyword_id: str) -> None:
         raise AppError("Keyword not found", 404, name="KEYWORD_NOT_FOUND")
     pk_delete(rec)
 
-def s_keyword_suggest(keyword: str, limit:int = 20) -> dict:
-    items = pk_suggest(keyword, limit = limit) or []
-    return {"items": [kw_public(x) for x in items]}
+
+def s_keyword_suggest(keyword: str, limit: int = 20) -> dict:
+    try:
+        limit = int(limit)
+        if limit <= 0 or limit > 100:
+            limit = 20
+    except (ValueError, TypeError):
+        limit = 20
+
+    try:
+        items = pk_suggest(keyword, limit=limit) or []
+        return {"items": [kw_public(x) for x in items]}
+    except Exception as e:
+        raise AppError(f"Failed to retrieve keyword suggestions: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 
 

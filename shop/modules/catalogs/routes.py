@@ -50,13 +50,23 @@ def r_product_specs(slug_or_id):
 def r_home_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_keyword_suggest(kw, int(limit)), "Home suggest products listed successfully.")
+    try:
+        limit = int(limit)
+    except (ValueError, TypeError):
+        raise AppError("Invalid limit parameter", 400, name="INVALID_LIMIT")
+    return ok(s_keyword_suggest(kw, limit), "Home suggest products listed successfully.")
+
 
 @bp.get("/product/suggest")
 def r_product_suggest():
     kw = request.args.get("keyword", "")
     limit = request.args.get("limit", 20)
-    return ok(s_keyword_suggest(kw, int(limit)), "Product suggest products listed successfully.")
+    try:
+        limit = int(limit)
+    except (ValueError, TypeError):
+        raise AppError("Invalid limit parameter", 400, name="INVALID_LIMIT")
+    return ok(s_keyword_suggest(kw, limit), "Product suggest products listed successfully.")
+
 
 #=============ADMIN==============
 #-------CATEGORY----------
@@ -96,7 +106,8 @@ def r_subcategory_update(slug_or_id):
 @jwt_required()
 @roles_required("admin")
 def r_subcategory_delete(slug_or_id):
-    return ok(s_subcategory_delete(slug_or_id), "Subcategory deleted successfully.")
+    s_subcategory_delete(slug_or_id)
+    return no_content("Subcategory deleted successfully.")
 
 #-------PRODUCT----------
 @bp_admin.post("/products")
@@ -115,7 +126,8 @@ def r_product_update(slug_or_id):
 @jwt_required()
 @roles_required("admin")
 def r_product_delete(slug_or_id):
-    return ok(s_product_delete(slug_or_id), "Product deleted successfully.")
+    s_product_delete(slug_or_id)
+    return no_content("Product deleted successfully.")
 
 #---------MEDIA---------
 @bp_admin.post("/products/<slug_or_id>/media")
