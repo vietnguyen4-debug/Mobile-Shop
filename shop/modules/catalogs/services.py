@@ -693,15 +693,22 @@ def s_keyword_bulk_replace(slug_or_id: str, payload: dict) -> dict:
     out = pk_bulk_replace(p, items) or []
     return {"items": [kw_public(x) for x in out]}
 
-def s_keyword_delete(slug_or_id: str, keyword_id: str) -> None:
-    oid = parse_oid(keyword_id)
-    if not oid:
-        raise AppError("Invalid keyword id", 400, name="INVALID_KEYWORD_ID")
+
+def s_keyword_delete(slug_or_id: str, keyword_or_id: str) -> None:
     p = find_by_slug_or_id("product", slug_or_id)
-    from .models import ProductKeyword
-    rec = ProductKeyword.objects(id=oid, product=p).first()
+    if not isinstance(p, Product):
+        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+
+    oid = parse_oid(keyword_or_id)
+    if oid:
+        from .models import ProductKeyword
+        rec = ProductKeyword.objects(id=oid, product=p).first()
+    else:
+        rec = pk_find(p, keyword_or_id)
+
     if not rec:
         raise AppError("Keyword not found", 404, name="KEYWORD_NOT_FOUND")
+
     pk_delete(rec)
 
 

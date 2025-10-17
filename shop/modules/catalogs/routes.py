@@ -222,12 +222,13 @@ def r_admin_keyword_upsert(pid):
 def r_admin_keywords_replace(pid):
     return ok(s_keyword_bulk_replace(pid, request.get_json() or {}), "Keywords replaced successfully.")
 
-@bp_admin.delete("/products/<pid>/keywords/<kid>")
+@bp_admin.delete("/products/<pid>/keywords/<keyword>")
 @jwt_required()
 @roles_required("admin")
-def r_admin_keyword_delete(pid, kid):
-    s_keyword_delete(pid, kid)
+def r_admin_keyword_delete(pid, keyword):
+    s_keyword_delete(pid, keyword)
     return no_content("Keyword deleted successfully.")
+
 
 
 
