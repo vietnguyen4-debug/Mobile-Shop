@@ -58,8 +58,7 @@ def product_public(p):
 
 def kw_public(kw):
     return {
-        "id": str(kw.id),
-        "product_id": str(kw.product_id) if kw.product_id else None,
+        "product_id": str(kw.product.id) if kw.product else None,
         "keyword": kw.keyword,
         "weight": kw.weight,
     }

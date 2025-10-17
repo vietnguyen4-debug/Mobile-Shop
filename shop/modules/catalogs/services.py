@@ -478,16 +478,30 @@ def s_keyword_list(slug_or_id: str) -> dict:
     items = pk_list_by_product(str(p.id)) or []
     return {"items": [kw_public(x) for x in items]}
 
+
 def s_keyword_upsert(slug_or_id: str, payload: dict):
     p = find_by_slug_or_id("product", slug_or_id)
     if not isinstance(p, Product):
         raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    kw = (payload.get("keyword") or "").strip()
-    if not kw:
-        raise AppError("Keyword required", 400, name="INVALID_KEYWORD")
-    weight = payload.get("weight") or 1
-    rec = pk_upsert(p, kw, weight)
-    return {"items": [kw_public(x) for x in rec]}
+
+    items = (payload or {}).get("items") or []
+    if not items:
+        raise AppError("Keywords items required", 400, name="INVALID_KEYWORD")
+
+    results = []
+    for item in items:
+        kw = (item.get("keyword") or "").strip()
+        if not kw:
+            continue  # Skip empty keywords
+        weight = item.get("weight") or 1
+        rec = pk_upsert(p, kw, weight)
+        results.append(rec)
+
+    if not results:
+        raise AppError("No valid keywords provided", 400, name="INVALID_KEYWORD")
+
+    return {"items": [kw_public(x) for x in results]}
+
 
 def s_keyword_bulk_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
