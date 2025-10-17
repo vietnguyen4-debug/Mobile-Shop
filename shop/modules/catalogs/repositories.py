@@ -1,6 +1,6 @@
 from typing import Optional, Tuple, Iterable
 from bson import ObjectId
-from .models import Category, SubCategory, Product, ProductKeyword
+from .models import Category, SubCategory, Product, ProductKeyword, Media, Spec
 from ...core.utils import parse_oid
 MAX_MEDIA = 20
 MAX_SPECS = 80
@@ -83,14 +83,127 @@ def mark_products_orphan_by_subcategory(sub_oid: ObjectId):
     for p in Product.objects(subcategory=sub_oid):
         p.subcategory = None; p.is_orphan = True; p.is_active = False; p.orphan_reason = "subcategory_deleted"; p.save()
 
+# -------- Product Media--------
+def media_list(p: Product) -> list[Media]:
+    return sorted(p.media or [], key=lambda m: (not bool(getattr(m, "is_primary", False)), getattr(m, "order", 0) or 0))
+
+def media_get(p: Product, media_id: str) -> Media | None:
+    for m in p.media or []:
+        if m.id == media_id: return m
+    return None
+
+def media_upsert(p: Product, item: dict) -> Product:
+    mid = item.get("id")
+    if mid:
+        m = media_get(p, mid)
+    else:
+        m = None
+    if m:
+        for k in ("kind", "url", "alt", "is_primary", "order"):
+            if k in item:
+                setattr(m, k, item[k])
+    else:
+        p.media = list(p.media or [])
+        p.media.append(Media(
+            id=mid,
+            kind=item.get("kind") or "image",
+            url=item.get("url"),
+            alt=item.get("alt"),
+            is_primary=bool(item.get("is_primary", False)),
+            order=int(item.get("order") or 0),
+        ))
+    return p.save()
+
+def media_delete(p: Product, media_id: str) -> Product:
+    p.media = [m for m in (p.media or []) if m.id != media_id]
+    return p.save()
+
+def media_replace(p: Product, items: list[dict]) -> Product:
+    p.media = []
+    for it in items or []:
+        p.media.append(Media(
+            id=it.get("id"),
+            kind=it.get("kind") or "image",
+            url=it.get("url"),
+            alt=it.get("alt"),
+            is_primary=bool(it.get("is_primary", False)),
+            order=int(it.get("order") or 0),
+        ))
+    return p.save()
+
+def media_reorder(p: Product, order_ids: list[str]) -> Product:
+    order_map = {mid: i for i, mid in enumerate(order_ids)}
+    for m in p.media or []:
+        if m.id in order_map:
+            m.order = order_map[m.id]
+    return p.save()
+
+def media_set_primary(p: Product, media_id: str) -> Product:
+    for m in p.media or []:
+        m.is_primary = (m.id == media_id)
+    return p.save()
+
+# -------- Product Specs--------
+def specs_list(p: Product) -> list[Spec]:
+    return sorted(p.specs or [], key=lambda s: (getattr(s, "order", 0) or 0,
+                                                (s.group or ""), (s.key or "")))
+
+def spec_get(p: Product, spec_id: str) -> Spec | None:
+    for s in p.specs or []:
+        if s.id == spec_id:
+            return s
+    return None
+
+def spec_upsert(p: Product, item: dict) -> Product:
+    sid = item.get("id")
+    s = spec_get(p, sid) if sid else None
+    if s:
+        for k in ("group", "key", "value", "order"):
+            if k in item:
+                setattr(s, k, item[k])
+    else:
+        p.specs = list(p.specs or [])
+        p.specs.append(Spec(
+            id=sid,
+            group=item.get("group"),
+            key=item.get("key"),
+            value=item.get("value"),
+            order=int(item.get("order") or 0),
+        ))
+    return p.save()
+
+def spec_delete(p: Product, spec_id: str) -> Product:
+    p.specs = [s for s in (p.specs or []) if s.id != spec_id]
+    return p.save()
+
+def specs_replace(p: Product, items: list[dict]) -> Product:
+    p.specs = []
+    for it in items or []:
+        p.specs.append(Spec(
+            id=it.get("id"),
+            group=it.get("group"),
+            key=it.get("key"),
+            value=it.get("value"),
+            order=int(it.get("order") or 0),
+        ))
+    return p.save()
+
+def specs_reorder(p: Product, order_ids: list[str]) -> Product:
+    order_map = {sid: i for i, sid in enumerate(order_ids)}
+    for s in p.specs or []:
+        if s.id in order_map:
+            s.order = order_map[s.id]
+    return p.save()
+
+
 # ----PRODUCT KEYWORD-----
 def pk_list_by_product(pid: str) -> list[ProductKeyword]:
     oid = parse_oid(pid)
-    return ProductKeyword.objects(id=oid).first() if oid else []
+    return list(ProductKeyword.objects(product=oid) if oid else None)
 
-def pk_get_by_id(kid: str) -> Optional[ProductKeyword]:
+def pk_get_by_id(kid: str) -> list[ProductKeyword]:
     oid = parse_oid(kid)
-    return ProductKeyword.objects(id=oid).first() if oid else None
+    return list(ProductKeyword.objects(id=oid) if oid else None)
 
 def pk_find(product: Product, keyword: str) -> Optional[ProductKeyword]:
     return ProductKeyword.objects(product=product, keyword=keyword).first()
@@ -109,9 +222,12 @@ def pk_bulk_replace(product: Product, items: Iterable[dict]) -> list[ProductKeyw
     for it in items:
         kw = (it.get("keyword") or "").strip()
         if not kw: continue
-        out.append(pk_upsert(product, kw, it.get("weight") or 1))
-    if out: ProductKeyword.objects.insert(out)
+        out.append(ProductKeyword(product=product, keyword=kw, weight=it.get("weight") or 1))
+    if out:
+        for rec in out:
+            rec.save()
     return out
+
 
 def pk_delete(pk: ProductKeyword) -> None:
     pk.delete()

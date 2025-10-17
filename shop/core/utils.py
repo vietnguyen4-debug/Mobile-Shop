@@ -1,5 +1,5 @@
 import re, unicodedata
-from typing import Tuple, Optional
+from typing import Tuple
 from bson import ObjectId
 
 def slugify(text: str, prefix: str | None = None) -> str:
@@ -8,11 +8,10 @@ def slugify(text: str, prefix: str | None = None) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return f"{prefix}-{text}" if prefix else text
 
-def parse_oid(s: str) -> Optional[ObjectId]:
-    try:
-        return ObjectId(str(s))
-    except Exception:
-        return None
+def parse_oid(oid: str):
+    if not isinstance(oid, str): return None
+    s = oid.strip()
+    return ObjectId(s) if ObjectId.is_valid(s) else None
 
 def parse_pagination(page: int | str | None, limit: int | str | None, *, max_limit=100) -> Tuple[int, int]:
     p = max(int(page or 1), 1)
