@@ -55,3 +55,11 @@ def product_public(p):
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
     }
+
+def kw_public(kw):
+    return {
+        "id": str(kw.id),
+        "product_id": str(kw.product_id) if kw.product_id else None,
+        "keyword": kw.keyword,
+        "weight": kw.weight,
+    }
