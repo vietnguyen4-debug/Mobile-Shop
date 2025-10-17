@@ -98,5 +98,3 @@ def set_default(uid:str, addr_id:str) -> Optional[bool]:
     u.save()
     return True
 
-def email_exists(email: str) -> bool:
-    return User.objects(email=email).first() is not None

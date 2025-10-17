@@ -36,7 +36,7 @@ def r_list_addresses(user_id):
 def r_add_address(user_id):
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
-        raise AppError("Body must be a JSON object", 400)
+        raise AppError("Body must be a JSON object", 400, name="INVALID_BODY")
     return created(s_add_address(user_id, data))
 
 @bp.put("/users/<user_id>/addresses/<address_id>")
