@@ -222,9 +222,12 @@ def pk_bulk_replace(product: Product, items: Iterable[dict]) -> list[ProductKeyw
     for it in items:
         kw = (it.get("keyword") or "").strip()
         if not kw: continue
-        out.append(pk_upsert(product, kw, it.get("weight") or 1))
-    if out: ProductKeyword.objects.insert(out)
+        out.append(ProductKeyword(product=product, keyword=kw, weight=it.get("weight") or 1))
+    if out:
+        for rec in out:
+            rec.save()
     return out
+
 
 def pk_delete(pk: ProductKeyword) -> None:
     pk.delete()

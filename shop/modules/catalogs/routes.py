@@ -38,6 +38,14 @@ def r_products_by_sub(sub_id):
 def r_product_get(slug_or_id):
     return ok(s_product_get(slug_or_id), "Product retrieved successfully.")
 
+@bp.get("/products/<slug_or_id>/media")
+def r_product_media(slug_or_id):
+    return ok(s_media_list(slug_or_id), "Media listed successfully.")
+
+@bp.get("/products/<slug_or_id>/specs")
+def r_product_specs(slug_or_id):
+    return ok(s_specs_list(slug_or_id), "Specs listed successfully.")
+
 @bp.get("/home/suggest")
 def r_home_suggest():
     kw = request.args.get("keyword", "")
@@ -68,7 +76,8 @@ def r_category_update(slug_or_id):
 @jwt_required()
 @roles_required("admin")
 def r_category_delete(slug_or_id):
-    return ok(s_category_delete(slug_or_id), "Category deleted successfully.")
+    s_category_delete(slug_or_id)
+    return no_content("Category deleted successfully.")
 
 #-------SUBCATEGORY----------
 @bp_admin.post("/subcategories")
