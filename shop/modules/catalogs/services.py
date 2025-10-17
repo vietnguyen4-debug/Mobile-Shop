@@ -476,7 +476,7 @@ def s_specs_reorder(slug_or_id: str, order_ids: List[str]) -> dict:
 def s_keyword_list(slug_or_id: str) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
     items = pk_list_by_product(str(p.id)) or []
-    return {"items": items}
+    return {"items": [kw_public(x) for x in items]}
 
 def s_keyword_upsert(slug_or_id: str, payload: dict):
     p = find_by_slug_or_id("product", slug_or_id)
@@ -487,13 +487,13 @@ def s_keyword_upsert(slug_or_id: str, payload: dict):
         raise AppError("Keyword required", 400, name="INVALID_KEYWORD")
     weight = payload.get("weight") or 1
     rec = pk_upsert(p, kw, weight)
-    return {"item": rec}
+    return {"items": [kw_public(x) for x in rec]}
 
 def s_keyword_bulk_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
     items = (payload or {}).get("items") or (payload or {}).get("keywords") or []
     out = pk_bulk_replace(p, items) or []
-    return {"items": out}
+    return {"items": [kw_public(x) for x in out]}
 
 def s_keyword_delete(slug_or_id: str, keyword_id: str) -> None:
     oid = parse_oid(keyword_id)
@@ -508,7 +508,7 @@ def s_keyword_delete(slug_or_id: str, keyword_id: str) -> None:
 
 def s_keyword_suggest(keyword: str, limit:int = 20) -> dict:
     items = pk_suggest(keyword, limit = limit) or []
-    return {"items": items}
+    return {"items": [kw_public(x) for x in items]}
 
 
 
