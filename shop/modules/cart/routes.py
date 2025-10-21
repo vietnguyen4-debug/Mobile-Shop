@@ -12,14 +12,24 @@ from .services import (
 from ...core.responses import ok, created
 from ...core.exceptions import AppError
 
+SESSION_COOKIE_NAME = "session_id"
+
 
 def _extract_session_id(data: dict | None = None) -> str | None:
+    header_names = ("Session-ID", "Session-Id", "X-Session-Id")
+    header_value = None
+    for name in header_names:
+        candidate = request.headers.get(name)
+        if candidate:
+            header_value = candidate
+            break
     candidates = [
-        request.headers.get("X-Session-Id"),
-        request.args.get("session_id"),
+        request.cookies.get(SESSION_COOKIE_NAME),
+        header_value,
+        request.args.get(SESSION_COOKIE_NAME),
     ]
     if data:
-        candidates.append(data.get("session_id"))
+        candidates.append(data.get(SESSION_COOKIE_NAME))
     for candidate in candidates:
         if isinstance(candidate, str):
             value = candidate.strip()
@@ -42,7 +52,7 @@ def r_add_item():
     data = request.get_json(silent=True) or {}
     session_id = _extract_session_id(data)
     payload = dict(data)
-    payload.pop("session_id", None)
+    payload.pop(SESSION_COOKIE_NAME, None)
     return created(s_add_item(get_jwt_identity(), session_id, payload), "Item added to cart successfully.")
 
 
@@ -52,7 +62,7 @@ def r_update_item(item_id):
     data = request.get_json(silent=True) or {}
     session_id = _extract_session_id(data)
     payload = dict(data)
-    payload.pop("session_id", None)
+    payload.pop(SESSION_COOKIE_NAME, None)
     return ok(s_update_item(get_jwt_identity(), session_id, item_id, payload), "Cart item updated successfully.")
 
 
