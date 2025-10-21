@@ -13,6 +13,7 @@ from ...core.responses import ok, created
 from ...core.exceptions import AppError
 
 
+
 def _extract_session_id(data: dict | None = None) -> str | None:
     candidates = [
         request.headers.get("X-Session-Id"),
