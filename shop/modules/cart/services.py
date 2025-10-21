@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from .mappers import cart_public
@@ -15,14 +17,22 @@ from .service_helpers import (
 )
 
 def s_get_cart(user_id: str | None, session_id: str | None) -> dict:
+    generate_session_id: str | None = None
     try:
+        if not user_id and not session_id:
+            generate_session_id = str(uuid4())
+            session_id = generate_session_id
+
         identity = build_identity(user_id, session_id)
         if identity.user and identity.session_id:
             merged = s_merge_cart_on_login(str(identity.user.id), identity.session_id)
             if merged is not None:
                 return merged
         cart = ensure_cart(identity, create=True)
-        return cart_public(cart)
+        result = cart_public(cart)
+        if generate_session_id and not result.get("session_id"):
+            result["session_id"] = generate_session_id
+        return result
     except AppError:
         raise
     except Exception as e:
