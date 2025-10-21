@@ -44,13 +44,22 @@ def s_add_item(user_id: str | None, session_id: str | None, payload: dict) -> di
     identifier = str(payload.get("product_id"))
     quantity_value = payload.get("quantity", 1)
 
+    generate_session_id: str | None = None
+
     try:
+        if not user_id and not session_id:
+            generate_session_id = str(uuid4())
+            session_id = generate_session_id
+
         identity = build_identity(user_id, session_id)
         quantity = parse_quantity(quantity_value)
         product = load_product(identifier)
         cart = ensure_cart(identity, create=True)
         cart = upsert_item(cart, product, quantity)
-        return cart_public(cart)
+        result = cart_public(cart)
+        if generate_session_id and not result.get("session_id"):
+            result["session_id"] = generate_session_id
+        return result
     except AppError:
         raise
     except Exception as e:

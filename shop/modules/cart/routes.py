@@ -12,12 +12,28 @@ from .services import (
 from ...core.responses import ok, created
 from ...core.exceptions import AppError
 
+SESSION_COOKIE_NAME = "session_id"
+SESSION_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 
+def _attach_session_cookie(response, session_id: str | None):
+    if session_id:
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            session_id,
+            max_age=SESSION_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="Lax",
+            secure=request.is_secure,
+        )
+    elif request.cookies.get(SESSION_COOKIE_NAME):
+        response.delete_cookie(SESSION_COOKIE_NAME)
+    return response
 
 def _extract_session_id(data: dict | None = None) -> str | None:
     candidates = [
         request.headers.get("X-Session-Id"),
         request.args.get("session_id"),
+        request.cookies.get(SESSION_COOKIE_NAME),
     ]
     if data:
         candidates.append(data.get("session_id"))
@@ -34,7 +50,9 @@ def _extract_session_id(data: dict | None = None) -> str | None:
 def r_get_cart():
     uid = get_jwt_identity()
     session_id = _extract_session_id()
-    return ok(s_get_cart(uid, session_id), "Cart retrieved successfully.")
+    result = s_get_cart(uid, session_id)
+    response = ok(result, "Cart retrieved successfully.")
+    return _attach_session_cookie(response, result.get("session_id"))
 
 
 @bp.post("/items")
@@ -44,7 +62,9 @@ def r_add_item():
     session_id = _extract_session_id(data)
     payload = dict(data)
     payload.pop("session_id", None)
-    return created(s_add_item(get_jwt_identity(), session_id, payload), "Item added to cart successfully.")
+    result = s_add_item(get_jwt_identity(), session_id, payload)
+    response = created(result, "Item added to cart successfully.")
+    return _attach_session_cookie(response, result.get("session_id"))
 
 
 @bp.patch("/items/<item_id>")
@@ -54,7 +74,9 @@ def r_update_item(item_id):
     session_id = _extract_session_id(data)
     payload = dict(data)
     payload.pop("session_id", None)
-    return ok(s_update_item(get_jwt_identity(), session_id, item_id, payload), "Cart item updated successfully.")
+    result = s_update_item(get_jwt_identity(), session_id, item_id, payload)
+    response = ok(result, "Cart item updated successfully.")
+    return _attach_session_cookie(response, result.get("session_id"))
 
 
 @bp.delete("/items/<item_id>")
@@ -72,4 +94,5 @@ def r_merge_cart():
     if not session_id:
         raise AppError("Session identifier required", 400, name="INVALID_SESSION")
     result = s_merge_cart_on_login(get_jwt_identity(), session_id)
-    return ok(result, "Cart merged successfully.")
+    response = ok(result, "Cart merged successfully.")
+    return _attach_session_cookie(response, result.get("session_id"))
