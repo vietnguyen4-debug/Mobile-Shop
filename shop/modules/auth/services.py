@@ -31,6 +31,15 @@ def s_signup(payload: dict):
     user.last_login_at = datetime.now(timezone.utc)
 
     access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
+    session_id = (payload.get("session_id") or "").strip()
+    if session_id:
+        try:
+            from ..cart.services import s_merge_cart_on_login
+            s_merge_cart_on_login(str(user.id), session_id)
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError(f"Failed to merge guest cart: {str(e)}", 500, name="CART_MERGE_ERROR")
     return {
         "user": user_public(user),
         "access_token": access_token,
@@ -52,6 +61,15 @@ def s_signin(payload: dict):
 
     user.last_login_at = datetime.now(timezone.utc)
     access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
+    session_id = (payload.get("session_id") or "").strip()
+    if session_id:
+        try:
+            from ..cart.services import s_merge_cart_on_login
+            s_merge_cart_on_login(str(user.id), session_id)
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError(f"Failed to merge guest cart: {str(e)}", 500, name="CART_MERGE_ERROR")
     return {
         "user": user_public(user),
         "access_token": access_token,
