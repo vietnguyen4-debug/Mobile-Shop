@@ -15,6 +15,7 @@ from ...core.exceptions import AppError
 SESSION_COOKIE_NAME = "session_id"
 
 
+
 def _extract_session_id(data: dict | None = None) -> str | None:
     header_names = ("Session-ID", "Session-Id", "X-Session-Id")
     header_value = None
