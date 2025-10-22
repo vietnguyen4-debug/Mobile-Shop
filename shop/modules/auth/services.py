@@ -117,7 +117,7 @@ def s_signup(payload: dict):
         raise AppError("Username already exists", 409)
 
     user = create_user(username, email, hash_password(password))
-    _set_up_user(user, payload)
+    return _set_up_user(user, payload)
 
 def s_signin(payload: dict):
     require_fields(payload, "email", "password")
@@ -132,7 +132,7 @@ def s_signin(payload: dict):
     if not user.is_active:
         raise AppError("Account is not active", 403)
 
-    _set_up_user(user, payload)
+    return _set_up_user(user, payload)
 
 def s_refresh_access(uid: str, refresh_jti: str | None):
     user = User.objects(id=uid).first()
