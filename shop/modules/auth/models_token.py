@@ -15,7 +15,7 @@ class TokenBlocklist(Document):
         "collection": "token_blocklist",
         "indexes": [
             {"fields": ["jti"], "unique": True},
-            {"fields": ["expires_at"]},
+            {"fields": ["expires_at"], "expireAfterSeconds": 0},
         ]
     }
 

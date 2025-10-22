@@ -1,6 +1,6 @@
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import current_app, request, has_request_context
 from flask_jwt_extended import decode_token
@@ -57,6 +57,25 @@ def _normalize_device_context(device_hint: str | None = None) -> tuple[str, str 
             device_hint = request.user_agent.string
     device_info = (device_hint or "").strip() or (ua or "Unknown device")
     return device_info, ua, _get_client_ip()
+
+def _access_block_ttl() -> int:
+    override = current_app.config.get("JWT_ACCESS_TTL_SECONDS")
+    if override is not None:
+        try:
+            ttl = int(override)
+            if ttl > 0:
+                return ttl
+        except (TypeError, ValueError):
+            pass
+    access_cfg = current_app.config.get("JWT_ACCESS_TOKEN_EXPIRES", timedelta(days=1))
+    if isinstance(access_cfg, timedelta):
+        ttl = int(access_cfg.total_seconds())
+    else:
+        try:
+            ttl = int(access_cfg)
+        except (TypeError, ValueError):
+            ttl = 24 * 3600
+    return max(ttl, 1)
 
 
 def _persist_session(user: User, refresh_token: str, device_hint: str | None = None):
@@ -145,10 +164,35 @@ def s_refresh_access(uid: str, refresh_jti: str | None):
         "refresh_token": refresh_token,
     }
 
-def s_signout(user: User, jti: str):
-    ttl = int(current_app.config.get("JWT_ACCESS_TTL_SECONDS", 8*3600))
-    block_access(user, jti, ttl)
-    return True
+def s_signout(
+    user: User,
+    access_jti: str,
+    refresh_token: str | None = None,
+    refresh_jti: str | None = None,
+    session_id: str | None = None,
+):
+    if not user:
+        raise AppError("Invalid user", 404)
+
+    if session_id:
+        revoked = revoke_sessions(user, session_id)
+        if not revoked:
+            raise AppError("Invalid session", 404)
+    else:
+        refresh_identifier = refresh_jti or _decode_refresh_jti(refresh_token)
+        if refresh_identifier:
+            block_refresh(user, refresh_identifier)
+            session = get_session_by_refresh_jti(user, refresh_identifier)
+            if session:
+                session.is_revoked = True
+                session.last_seen_at = datetime.now(timezone.utc)
+                session.save()
+            revoked = True
+        else:
+            raise AppError("Refresh token or session identifier required", 400)
+
+    block_access(user, access_jti, _access_block_ttl())
+    return revoked
 
 def s_signout_all(user: User):
     revoke_all_sessions(user)
