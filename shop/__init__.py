@@ -15,7 +15,7 @@ def create_app(config_object=config.DevConfig):
 
     db.init_app(app)
     jwt.init_app(app)
-    cors.init_app(app)
+    cors.init_app(app, supports_credentials=True)
     cache.init_app(app)
 
 
