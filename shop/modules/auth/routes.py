@@ -1,4 +1,3 @@
-from flask import request
 from flask_jwt_extended import jwt_required
 
 from . import bp
@@ -31,7 +30,14 @@ def r_signout():
     uid = get_jwt_identity()
     jti = get_jwt()["jti"]
     user = User.objects(id=uid).first()
-    s_signout(user, jti)
+    data = request.get_json(silent=True) or {}
+    s_signout(
+        user,
+        jti,
+        refresh_token=data.get("refresh_token"),
+        refresh_jti=data.get("refresh_jti"),
+        session_id=data.get("session_id"),
+    )
     return no_content("User signed out successfully.")
 
 @bp.post("/signout-all")
