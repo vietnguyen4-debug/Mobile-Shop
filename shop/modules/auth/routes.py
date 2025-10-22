@@ -1,4 +1,10 @@
-from flask_jwt_extended import jwt_required
+from typing import Any
+
+from flask_jwt_extended import (
+    jwt_required,
+    set_refresh_cookies,
+    unset_refresh_cookies
+)
 
 from . import bp
 from .services import *
@@ -6,23 +12,54 @@ from ..users.models import User
 from ...core.responses import ok, created, no_content
 from ...core.rbac import *
 
+def _extract_refresh_token(payload: Any) -> tuple[Any, str | None]:
+    """Split refresh token from payload without mutating the original dict."""
+
+    if not isinstance(payload, dict):
+        return payload, None
+
+    refresh_token = payload.get("refresh_token")
+    if refresh_token is None:
+        return payload, None
+
+    clean_payload = dict(payload)
+    clean_payload.pop("refresh_token", None)
+    if isinstance(refresh_token, str) and refresh_token:
+        return clean_payload, refresh_token
+
+    return clean_payload, None
+
+
+def _attach_refresh_cookie(response, refresh_token: str | None):
+    if isinstance(refresh_token, str) and refresh_token:
+        set_refresh_cookies(response, refresh_token)
+    return response
 
 @bp.post("/signup")
 def r_signup():
     data = request.get_json() or {}
-    return created(s_signup(data), "User created successfully.")
+    result, refresh_token = _extract_refresh_token(s_signup(data))
+    response = created(result, "User created successfully.")
+    return _attach_refresh_cookie(response, refresh_token)
 
 @bp.post("/signin")
 def r_signin():
     data = request.get_json() or {}
-    return ok(s_signin(data), "User signed in successfully.")
+    result, refresh_token = _extract_refresh_token(s_signin(data))
+    response = ok(result, "User signed in successfully.")
+    return _attach_refresh_cookie(response, refresh_token)
 
 @bp.post("/refresh")
 @jwt_required(refresh=True)
 def r_refresh():
     identity = get_jwt_identity()
     refresh_claims = get_jwt()
-    return ok(s_refresh_access(identity, refresh_claims.get("jti")), "Token refreshed successfully.")
+    result, refresh_token = _extract_refresh_token(
+        s_refresh_access(identity, refresh_claims.get("jti"))
+    )
+    response = ok(result, "Token refreshed successfully.")
+    return _attach_refresh_cookie(response, refresh_token)
+
 
 @bp.post("/signout")
 @jwt_required()
@@ -31,14 +68,20 @@ def r_signout():
     jti = get_jwt()["jti"]
     user = User.objects(id=uid).first()
     data = request.get_json(silent=True) or {}
+    refresh_token = data.get("refresh_token")
+    if not refresh_token:
+        cookie_name = current_app.config.get("JWT_REFRESH_COOKIE_NAME", "refresh_token_cookie")
+        refresh_token = request.cookies.get(cookie_name)
     s_signout(
         user,
         jti,
-        refresh_token=data.get("refresh_token"),
+        refresh_token=refresh_token,
         refresh_jti=data.get("refresh_jti"),
         session_id=data.get("session_id"),
     )
-    return no_content("User signed out successfully.")
+    response = no_content("User signed out successfully.")
+    unset_refresh_cookies(response)
+    return response
 
 @bp.post("/signout-all")
 @jwt_required()
@@ -46,7 +89,9 @@ def r_signout_all():
     uid = get_jwt_identity()
     user = User.objects(id=uid).first()
     s_signout_all(user)
-    return no_content("All sessions revoked successfully.")
+    response = no_content("All sessions revoked successfully.")
+    unset_refresh_cookies(response)
+    return response
 
 @bp.get("/sessions")
 @jwt_required()
