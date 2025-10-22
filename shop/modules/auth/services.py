@@ -2,12 +2,25 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
-from flask import current_app
+from flask import current_app, request, has_request_context
+from flask_jwt_extended import decode_token
 
 from .models_recovery import PasswordReset
-from .repositories import block_access, revoke_all_sessions, create_password_reset, mark_password_reset_used, \
-    create_email_verification, mark_email_verification_used, list_sessions, revoke_sessions, \
-    get_valid_email_verification
+from .repositories import (
+    block_access,
+    block_refresh,
+    revoke_all_sessions,
+    create_password_reset,
+    mark_password_reset_used,
+    create_email_verification,
+    mark_email_verification_used,
+    list_sessions,
+    revoke_sessions,
+    get_valid_email_verification,
+    save_signin_session,
+    get_session_by_refresh_jti,
+    update_session_refresh,
+)
 from ...core.exceptions import AppError
 from ...core.validation import require_fields
 from ...core.security import hash_password, verify_password
@@ -15,22 +28,48 @@ from ...core.jwt_tools import issue_tokens
 from ..users.repositories import *
 from ..users.mappers import user_public
 from ...core.mailer import send_reset_password, send_verify_email
+from ..users.models import User
 
-def s_signup(payload: dict):
-    require_fields(payload, "username", "email", "password")
-    username = payload["username"].strip()
-    email = payload["email"].strip().lower()
-    password = payload["password"]
+def _decode_refresh_jti(token: str | None) -> str | None:
+    if not token:
+        return None
+    try:
+        decoded = decode_token(token)
+    except Exception:
+        return None
+    return decoded.get("jti")
 
-    if email_exists(email):
-        raise AppError("Email already exists", 409)
-    if username_exists(username):
-        raise AppError("Username already exists", 409)
 
-    user = create_user(username, email, hash_password(password))
+def _get_client_ip() -> str | None:
+    if not has_request_context():
+        return None
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr
+
+
+def _normalize_device_context(device_hint: str | None = None) -> tuple[str, str | None, str | None]:
+    ua = None
+    if has_request_context():
+        ua = request.headers.get("User-Agent")
+        if not device_hint:
+            device_hint = request.user_agent.string
+    device_info = (device_hint or "").strip() or (ua or "Unknown device")
+    return device_info, ua, _get_client_ip()
+
+
+def _persist_session(user: User, refresh_token: str, device_hint: str | None = None):
+    refresh_jti = _decode_refresh_jti(refresh_token)
+    if not refresh_jti:
+        return
+    device_info, user_agent, ip = _normalize_device_context(device_hint)
+    save_signin_session(user, refresh_jti, device_info, user_agent, ip)
+
+def _set_up_user(user: User, payload: dict):
     user.last_login_at = datetime.now(timezone.utc)
-
     access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
+    _persist_session(user, refresh_token, payload.get("device_info"))
     session_id = (payload.get("session_id") or "").strip()
     if session_id:
         try:
@@ -45,6 +84,21 @@ def s_signup(payload: dict):
         "access_token": access_token,
         "refresh_token": refresh_token,
     }
+
+
+def s_signup(payload: dict):
+    require_fields(payload, "username", "email", "password")
+    username = payload["username"].strip()
+    email = payload["email"].strip().lower()
+    password = payload["password"]
+
+    if email_exists(email):
+        raise AppError("Email already exists", 409)
+    if username_exists(username):
+        raise AppError("Username already exists", 409)
+
+    user = create_user(username, email, hash_password(password))
+    _set_up_user(user, payload)
 
 def s_signin(payload: dict):
     require_fields(payload, "email", "password")
@@ -59,26 +113,37 @@ def s_signin(payload: dict):
     if not user.is_active:
         raise AppError("Account is not active", 403)
 
-    user.last_login_at = datetime.now(timezone.utc)
+    _set_up_user(user, payload)
+
+def s_refresh_access(uid: str, refresh_jti: str | None):
+    user = User.objects(id=uid).first()
+    if not user:
+        raise AppError("Invalid user", 404)
+    if not refresh_jti:
+        raise AppError("Invalid refresh token", 401)
+
+    session = get_session_by_refresh_jti(user, refresh_jti)
+    if not session or session.is_revoked:
+        block_refresh(user, refresh_jti)
+        raise AppError("Session has been revoked", 401)
+
     access_token, refresh_token = issue_tokens(str(user.id), role=user.role)
-    session_id = (payload.get("session_id") or "").strip()
-    if session_id:
-        try:
-            from ..cart.services import s_merge_cart_on_login
-            s_merge_cart_on_login(str(user.id), session_id)
-        except AppError:
-            raise
-        except Exception as e:
-            raise AppError(f"Failed to merge guest cart: {str(e)}", 500, name="CART_MERGE_ERROR")
+    new_refresh_jti = _decode_refresh_jti(refresh_token)
+    if not new_refresh_jti:
+        block_refresh(user, refresh_jti)
+        raise AppError("Failed to rotate refresh token", 500)
+
+    payload = request.get_json(silent=True) if has_request_context() else None
+    device_hint = payload.get("device_info") if isinstance(payload, dict) else None
+    device_info, user_agent, ip = _normalize_device_context(device_hint)
+
+    block_refresh(user, refresh_jti)
+    update_session_refresh(session, new_refresh_jti, device_info, user_agent, ip)
+
     return {
-        "user": user_public(user),
         "access_token": access_token,
         "refresh_token": refresh_token,
     }
-
-def s_refresh_access(uid: str):
-    access, _ = issue_tokens(uid, access=1, refresh=7)
-    return {"access_token": access}
 
 def s_signout(user: User, jti: str):
     ttl = int(current_app.config.get("JWT_ACCESS_TTL_SECONDS", 8*3600))
@@ -93,8 +158,9 @@ def s_list_sessions(user: User):
     return[{
         "id": str(s.id),
         "device_info": s.device_info,
+        "user_agent": s.user_agent,
         "ip": s.ip_address,
-        "last_seen_at": s.last_seen_at.isoformat(),
+        "last_seen_at": s.last_seen_at.isoformat() if s.last_seen_at else None,
         "revoked": s.is_revoked,
     } for s in list_sessions(user)]
 
