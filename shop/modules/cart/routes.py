@@ -30,13 +30,20 @@ def _attach_session_cookie(response, session_id: str | None):
     return response
 
 def _extract_session_id(data: dict | None = None) -> str | None:
+    header_names = ("Session-ID", "Session-Id", "X-Session-Id")
+    header_value = None
+    for name in header_names:
+        candidate = request.headers.get(name)
+        if candidate:
+            header_value = candidate
+            break
     candidates = [
         request.headers.get("X-Session-Id"),
         request.args.get("session_id"),
         request.cookies.get(SESSION_COOKIE_NAME),
     ]
     if data:
-        candidates.append(data.get("session_id"))
+        candidates.append(data.get(SESSION_COOKIE_NAME))
     for candidate in candidates:
         if isinstance(candidate, str):
             value = candidate.strip()

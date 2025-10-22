@@ -22,7 +22,8 @@ def r_signin():
 @jwt_required(refresh=True)
 def r_refresh():
     identity = get_jwt_identity()
-    return ok(s_refresh_access(identity))
+    refresh_claims = get_jwt()
+    return ok(s_refresh_access(identity, refresh_claims.get("jti")), "Token refreshed successfully.")
 
 @bp.post("/signout")
 @jwt_required()

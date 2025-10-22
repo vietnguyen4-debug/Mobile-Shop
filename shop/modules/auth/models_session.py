@@ -6,6 +6,7 @@ class DeviceSession(Document):
     user = ReferenceField(User)
     device_info = StringField(required=True)
     ip_address = StringField(required=True)
+    user_agent = StringField(required=True)
     refresh_jti = StringField(required=True)
     last_seen_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
     is_revoked = BooleanField(default=False)
@@ -13,7 +14,7 @@ class DeviceSession(Document):
         "collection": "device_sessions",
         "indexes": [
             {"fields": ["user"]},
-            {"fields": ["refresh_jti"]},
+            {"fields": ["refresh_jti"], "unique": True},
             {"fields": ["-last_seen_at"]},
         ]
     }
