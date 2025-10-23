@@ -1,6 +1,6 @@
 from flask import request
 from flask_jwt_extended import get_jwt_identity, jwt_required
-
+from ...core.rbac import roles_required
 from . import bp
 from .services import (
     s_complete_offline_payment,
@@ -13,7 +13,8 @@ from ...core.responses import created, ok
 
 
 @bp.get("")
-@jwt_required(optional=True)
+@jwt_required()
+@roles_required("admin")
 def r_list_payments():
     checkout_id = request.args.get("checkout_id", type=str)
     if not checkout_id:
@@ -23,14 +24,16 @@ def r_list_payments():
 
 
 @bp.get("/<payment_id>")
-@jwt_required(optional=True)
+@jwt_required()
+@roles_required("admin")
 def r_get_payment(payment_id):
     payment = s_get_payment(payment_id)
     return ok(payment, "Payment retrieved successfully.")
 
 
 @bp.post("/offline")
-@jwt_required(optional=True)
+@jwt_required()
+@roles_required("admin")
 def r_create_offline_payment():
     data = request.get_json(silent=True) or {}
     payment = s_create_offline_payment(get_jwt_identity(), data)
@@ -39,6 +42,7 @@ def r_create_offline_payment():
 
 @bp.post("/<payment_id>/complete")
 @jwt_required()
+@roles_required("admin")
 def r_complete_offline_payment(payment_id):
     data = request.get_json(silent=True) or {}
     payment = s_complete_offline_payment(payment_id, data)
