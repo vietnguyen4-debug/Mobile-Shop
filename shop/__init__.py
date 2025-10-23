@@ -9,6 +9,8 @@ from .modules.users.routes import bp as users_bp
 from .modules.catalogs.routes import bp as catalogs_bp
 from .modules.catalogs.routes import bp_admin as catalogs_admin_bp
 from .modules.cart.routes import bp as cart_bp
+from .modules.payment.routes import bp as payment_bp
+
 def create_app(config_object=config.DevConfig):
     app = Flask(__name__)
     app.config.from_object(config_object)
@@ -24,6 +26,7 @@ def create_app(config_object=config.DevConfig):
     app.register_blueprint(catalogs_bp)
     app.register_blueprint(catalogs_admin_bp)
     app.register_blueprint(cart_bp)
+    app.register_blueprint(payment_bp)
 
     register_middlewares(app)
 
