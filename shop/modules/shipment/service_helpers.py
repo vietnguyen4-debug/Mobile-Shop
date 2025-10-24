@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from ...core.exceptions import AppError
-from ..checkout.models import Checkout
 from ..users.models import Address, User
+from ...core.utils import normalize_required_string
 
 
 @dataclass
@@ -15,61 +15,6 @@ class ResolvedAddress:
     city: str
     source: str
     user_address_id: Optional[str] = None
-
-def _ensure_checkout_access(
-    checkout: Checkout, user: Optional[User], session_id: Optional[str]
-) -> None:
-    checkout_user = getattr(checkout, "user", None)
-    checkout_session = getattr(checkout, "session_id", None)
-
-    if user:
-        if checkout_user and str(checkout_user.id) != str(user.id):
-            raise AppError(
-                "Checkout does not belong to the current user",
-                403,
-                name="CHECKOUT_FORBIDDEN",
-            )
-        if session_id and checkout_session and checkout_session != session_id:
-            raise AppError(
-                "Session identifier does not match checkout",
-                403,
-                name="CHECKOUT_FORBIDDEN",
-            )
-        return
-
-    if checkout_user:
-        raise AppError(
-            "Checkout belongs to a user account",
-            403,
-            name="CHECKOUT_FORBIDDEN",
-        )
-
-    if not session_id:
-        raise AppError(
-            "Session identifier is required for guest checkout",
-            400,
-            name="INVALID_SESSION",
-        )
-
-    if checkout_session and checkout_session != session_id:
-        raise AppError(
-            "Session identifier does not match checkout",
-            403,
-            name="CHECKOUT_FORBIDDEN",
-        )
-
-
-def _normalize_required_string(
-    value: Any, *, field: str, code: str, max_length: int
-) -> str:
-    if not isinstance(value, str):
-        raise AppError(f"{field} must be a string", 400, name=code)
-    cleaned = value.strip()
-    if not cleaned:
-        raise AppError(f"{field} is required", 400, name=code)
-    if len(cleaned) > max_length:
-        raise AppError(f"{field} is too long", 400, name=code)
-    return cleaned
 
 
 def _normalize_optional_string(
@@ -110,13 +55,13 @@ def _get_user_address(user: Optional[User], address_id: Any) -> Address:
 def _parse_address_payload(address_payload: Any) -> tuple[str, str]:
     if not isinstance(address_payload, dict):
         raise AppError("address must be an object", 400, name="INVALID_ADDRESS")
-    address_line = _normalize_required_string(
+    address_line = normalize_required_string(
         address_payload.get("address_line"),
         field="Address line",
         code="INVALID_ADDRESS_LINE",
         max_length=255,
     )
-    city = _normalize_required_string(
+    city = normalize_required_string(
         address_payload.get("city"),
         field="City",
         code="INVALID_CITY",
@@ -130,13 +75,13 @@ def _resolve_address(
 ) -> ResolvedAddress:
     if address_id not in (None, ""):
         address = _get_user_address(user, address_id)
-        address_line = _normalize_required_string(
+        address_line = normalize_required_string(
             getattr(address, "address_line", None),
             field="Address line",
             code="INVALID_ADDRESS_LINE",
             max_length=255,
         )
-        city = _normalize_required_string(
+        city = normalize_required_string(
             getattr(address, "city", None),
             field="City",
             code="INVALID_CITY",
