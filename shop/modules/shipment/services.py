@@ -1,7 +1,7 @@
 from ...core.validation import require_fields
 from .mappers import shipment_public
 from .repositories import *
-from .service_helpers import _ensure_checkout_access, _normalize_note, _normalize_recipient_name, _normalize_recipient_phone, _resolve_address
+from .service_helpers import  _normalize_note, _normalize_recipient_name, _normalize_recipient_phone, _resolve_address
 from ...core.utils import *
 
 def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
@@ -10,7 +10,7 @@ def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
         checkout = load_checkout(payload.get("checkout_id"))
         user = load_user(user_id)
         session_id = sanitize_session_id(payload.get("session_id"))
-        _ensure_checkout_access(checkout, user, session_id)
+        ensure_checkout_access(checkout, user, session_id)
 
         address = _resolve_address(
             user,
@@ -112,7 +112,7 @@ def s_get_shipment_for_checkout(
         checkout = load_checkout(checkout_id)
         user = load_user(user_id)
         sanitized_session = sanitize_session_id(session_id)
-        _ensure_checkout_access(checkout, user, sanitized_session)
+        ensure_checkout_access(checkout, user, sanitized_session)
         shipment = shipment_get_by_checkout(checkout)
         if not shipment:
             raise AppError("Shipment not found", 404, name="SHIPMENT_NOT_FOUND")
