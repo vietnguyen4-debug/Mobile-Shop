@@ -83,4 +83,57 @@ def sanitize_session_id(session_id: Any) -> Optional[str]:
         raise AppError("Session identifier too long", 400, name="INVALID_SESSION")
     return cleaned
 
+def ensure_checkout_access(
+    checkout: Checkout, user: Optional[User], session_id: Optional[str]
+) -> None:
+    checkout_user = getattr(checkout, "user", None)
+    checkout_session = getattr(checkout, "session_id", None)
+
+    if user:
+        if checkout_user and str(checkout_user.id) != str(user.id):
+            raise AppError(
+                "Checkout does not belong to the current user",
+                403,
+                name="CHECKOUT_FORBIDDEN",
+            )
+        if session_id and checkout_session and checkout_session != session_id:
+            raise AppError(
+                "Session identifier does not match checkout",
+                403,
+                name="CHECKOUT_FORBIDDEN",
+            )
+        return
+
+    if checkout_user:
+        raise AppError(
+            "Checkout belongs to a user account",
+            403,
+            name="CHECKOUT_FORBIDDEN",
+        )
+
+    if not session_id:
+        raise AppError(
+            "Session identifier is required for guest checkout",
+            400,
+            name="INVALID_SESSION",
+        )
+
+    if checkout_session and checkout_session != session_id:
+        raise AppError(
+            "Session identifier does not match checkout",
+            403,
+            name="CHECKOUT_FORBIDDEN",
+        )
+
+def normalize_required_string(
+    value: Any, *, field: str, code: str, max_length: int
+) -> str:
+    if not isinstance(value, str):
+        raise AppError(f"{field} must be a string", 400, name=code)
+    cleaned = value.strip()
+    if not cleaned:
+        raise AppError(f"{field} is required", 400, name=code)
+    if len(cleaned) > max_length:
+        raise AppError(f"{field} is too long", 400, name=code)
+    return cleaned
 
