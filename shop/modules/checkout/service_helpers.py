@@ -196,6 +196,46 @@ def _collect_related_documents(checkout: Checkout):
     payments = payment_list_by_checkout(checkout)
     return shipment, payments
 
+def _get_default_user_address(user: Optional[User]) -> Optional[Address]:
+    if not user:
+        return None
+    addresses = getattr(user, "addresses", None) or []
+    for address in addresses:
+        if getattr(address, "is_default", False):
+            return address
+    return None
+
+
+def _build_virtual_shipment_snapshot(checkout: Checkout) -> Optional[dict]:
+    user = getattr(checkout, "user", None)
+    if not user:
+        return None
+
+    address = _get_default_user_address(user)
+    if not address:
+        return None
+
+    first_name = getattr(user, "first_name", "") or ""
+    last_name = getattr(user, "last_name", "") or ""
+    full_name = " ".join(part for part in [first_name, last_name] if part).strip() or None
+
+    return {
+        "id": None,
+        "checkout_id": str(checkout.id) if getattr(checkout, "id", None) else None,
+        "user_id": str(user.id) if getattr(user, "id", None) else None,
+        "session_id": getattr(checkout, "session_id", None),
+        "source": "user",
+        "status": getattr(checkout, "status", None) or "pending",
+        "address_line": getattr(address, "address_line", None),
+        "city": getattr(address, "city", None),
+        "recipient_name": full_name,
+        "recipient_phone": getattr(user, "phone", None),
+        "note": None,
+        "user_address_id": getattr(address, "id", None),
+        "created_at": None,
+        "updated_at": None,
+        "__virtual__": True,
+    }
 
 def _update_shipment_status(shipment, *, status: str) -> None:
     if not shipment:
