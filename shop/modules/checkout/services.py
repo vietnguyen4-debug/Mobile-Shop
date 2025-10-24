@@ -16,6 +16,7 @@ from .service_helpers import (
     _parse_customer,
     _store_checkout,
     _update_shipment_status,
+    _build_virtual_shipment_snapshot
 )
 
 
@@ -51,7 +52,10 @@ def _build_snapshot(checkout) -> Dict[str, Any]:
         cart_data, subtotal = None, float(getattr(checkout, "total_amount", 0.0) or 0.0)
 
     shipment_doc, payment_docs = _collect_related_documents(checkout)
-    shipment_data = serialize_shipment(shipment_doc)
+    if shipment_doc:
+        shipment_data = serialize_shipment(shipment_doc)
+    else:
+        shipment_data = _build_virtual_shipment_snapshot(checkout)
     payments_data = serialize_payments(payment_docs)
     totals = _calculate_totals(subtotal, payment_docs, getattr(checkout, "currency", "VND"))
     return checkout_snapshot(
