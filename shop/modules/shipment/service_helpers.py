@@ -69,30 +69,33 @@ def _parse_address_payload(address_payload: Any) -> tuple[str, str]:
     )
     return address_line, city
 
+def _build_resolved_user_address(address: Address) -> ResolvedAddress:
+    address_line = normalize_required_string(
+        getattr(address, "address_line", None),
+        field="Address line",
+        code="INVALID_ADDRESS_LINE",
+        max_length=255,
+    )
+    city = normalize_required_string(
+        getattr(address, "city", None),
+        field="City",
+        code="INVALID_CITY",
+        max_length=120,
+    )
+    return ResolvedAddress(
+        address_line=address_line,
+        city=city,
+        source="user",
+        user_address_id=getattr(address, "id", None),
+    )
 
 def _resolve_address(
     user: Optional[User], address_id: Any, address_payload: Any
 ) -> ResolvedAddress:
     if address_id not in (None, ""):
         address = _get_user_address(user, address_id)
-        address_line = normalize_required_string(
-            getattr(address, "address_line", None),
-            field="Address line",
-            code="INVALID_ADDRESS_LINE",
-            max_length=255,
-        )
-        city = normalize_required_string(
-            getattr(address, "city", None),
-            field="City",
-            code="INVALID_CITY",
-            max_length=120,
-        )
-        return ResolvedAddress(
-            address_line=address_line,
-            city=city,
-            source="user",
-            user_address_id=getattr(address, "id", None),
-        )
+        return _build_resolved_user_address(address)
+
     if address_payload is not None:
         address_line, city = _parse_address_payload(address_payload)
         return ResolvedAddress(
@@ -101,6 +104,14 @@ def _resolve_address(
             source="user" if user else "guest",
             user_address_id=None,
         )
+    if user:
+        default_address = next(
+            (address for address in user.addresses or [] if getattr(address, "is_default", False)),
+            None,
+        )
+        if default_address is not None:
+            return _build_resolved_user_address(default_address)
+
     raise AppError(
         "Either address_id or address object must be provided",
         400,
