@@ -2,6 +2,7 @@ from typing import Dict, List
 
 from ..cart.repositories import cart_save
 from ..shipment.services import s_assign_shipment
+from .repositories import checkout_save
 from .mappers import checkout_snapshot, serialize_payments, serialize_shipment
 from ...core.utils import *
 from .service_helpers import (
@@ -132,7 +133,7 @@ def s_start_checkout(user_id: Optional[str], payload: Optional[dict]) -> Dict[st
             s_assign_shipment(payload_user_id, shipment_data)
 
         checkout.total_amount = subtotal
-        checkout = checkout.save()
+        checkout = checkout_save(checkout)
         return _build_snapshot(checkout)
     except AppError:
         raise
@@ -194,7 +195,7 @@ def s_complete_checkout(
             checkout.user = user or checkout.user
             if session_id:
                 checkout.session_id = session_id
-            checkout = checkout.save()
+            checkout = checkout_save(checkout)
             if cart:
                 cart.status = "converted"
                 cart_save(cart)

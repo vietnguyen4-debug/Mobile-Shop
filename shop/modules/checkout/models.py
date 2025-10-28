@@ -12,6 +12,7 @@ class Checkout(Document, AuditMixin):
     )
     currency = StringField(default="VND", max_length=10)
     total_amount = FloatField(default=0.0, min_value=0)
+    expires_at = DateTimeField(required=False, null=True)
 
     meta = {
         "collection": "checkout",
@@ -20,6 +21,7 @@ class Checkout(Document, AuditMixin):
             {"fields": ["user", "-created_at"], "name": "idx_checkout_user_created"},
             {"fields": ["session_id"], "name": "idx_checkout_session"},
             {"fields": ["status", "-created_at"], "name": "idx_checkout_status_created"},
+            {"fields": ["expires_at"], "expireAfterSeconds": 0},
         ],
     }
 

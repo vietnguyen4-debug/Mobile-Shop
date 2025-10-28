@@ -7,6 +7,9 @@ class DevConfig:
     MONGODB_NAME = os.environ.get("MONGODB_NAME", "mobile_shop")
     MONGODB_HOST = os.environ.get("MONGODB_HOST", "127.0.0.1")
     MONGODB_PORT = int(os.environ.get("MONGODB_PORT", 27017))
+    CHECKOUT_PENDING_TTL_SECONDS = int(
+        os.environ.get("CHECKOUT_PENDING_TTL_SECONDS", 24 * 60 * 60)
+    )
     CACHE_TYPE = "SimpleCache"
     JSON_SORT_KEYS = False
     JWT_TOKEN_LOCATION = ["headers", "cookies"]
