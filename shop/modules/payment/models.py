@@ -19,8 +19,14 @@ class Payment(Document, AuditMixin):
 
     meta = {
         "collection": "payment",
+        # Match existing indexes in DB (background: false) to avoid option mismatch
+        "index_background": False,
         "indexes": [
-            {"fields": ["checkout", "method"], "name": "idx_payment_checkout_method"},
+            {
+                "fields": ["checkout", "method"],
+                # Allow multiple payments per checkout/method (non-unique)
+                "name": "idx_payment_checkout_method",
+            },
             {"fields": ["status", "-created_at"], "name": "idx_payment_status_created"},
         ],
     }
