@@ -2,7 +2,8 @@ from flask import request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from . import bp
-from .services import s_assign_shipment, s_get_shipment_for_checkout
+from .services import s_assign_shipment, s_get_shipment_for_checkout, s_complete_shipment
+from ...core.rbac import roles_required
 from ...core.responses import ok
 from ...core.utils import sanitize_session_id
 
@@ -43,3 +44,10 @@ def r_get_shipment(checkout_id):
         get_jwt_identity(), checkout_id, session_id
     )
     return ok(shipment, "Shipment retrieved successfully.")
+
+@bp.post("/<shipment_id>/complete")
+@jwt_required()
+@roles_required("admin")
+def r_complete_shipment(shipment_id):
+    shipment = s_complete_shipment(shipment_id)
+    return ok(shipment, "Shipment marked as delivered.")

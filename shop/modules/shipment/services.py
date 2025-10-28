@@ -123,3 +123,35 @@ def s_get_shipment_for_checkout(
         raise AppError(
             f"Failed to retrieve shipment: {str(exc)}", 500, name="DATABASE_ERROR"
         )
+
+def s_complete_shipment(shipment_id: str) -> dict:
+    try:
+        shipment = shipment_get_by_id(shipment_id)
+        if not shipment:
+            raise AppError("Shipment not found", 404, name="SHIPMENT_NOT_FOUND")
+
+        status = getattr(shipment, "status", None) or "pending"
+        if status == "delivered":
+            return shipment_public(shipment)
+        if status == "cancelled":
+            raise AppError(
+                "Cannot complete a cancelled shipment",
+                400,
+                name="SHIPMENT_CANCELLED",
+            )
+        if status not in ("processing", "shipped"):
+            raise AppError(
+                "Shipment must be processing or shipped before completion",
+                400,
+                name="SHIPMENT_NOT_READY",
+            )
+
+        shipment.status = "delivered"
+        shipment = shipment_save(shipment)
+        return shipment_public(shipment)
+    except AppError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        raise AppError(
+            f"Failed to complete shipment: {str(exc)}", 500, name="DATABASE_ERROR"
+        )
