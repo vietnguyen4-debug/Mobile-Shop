@@ -1,18 +1,9 @@
 import os
-import secrets
 from datetime import timedelta
 
-def _get_secret_key(env_name: str):
-    value = (os.environ.get(env_name) or "").strip()
-    if value:
-        return value
-    generated = secrets.token_urlsafe(32)
-    os.environ[env_name] = generated
-    return generated
-
 class DevConfig:
-    SECRET_KEY = _get_secret_key("SECRET_KEY")
-    JWT_SECRET_KEY = _get_secret_key("JWT_SECRET_KEY")
+    SECRET_KEY = os.environ["SECRET_KEY"]
+    JWT_SECRET_KEY = os.environ["JWT_SECRET_KEY"]
     MONGODB_NAME = os.environ.get("MONGODB_NAME", "mobile_shop")
     MONGODB_HOST = os.environ.get("MONGODB_HOST", "127.0.0.1")
     MONGODB_PORT = int(os.environ.get("MONGODB_PORT", 27017))
