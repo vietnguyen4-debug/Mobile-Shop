@@ -87,6 +87,11 @@ def ensure_cart(identity: CartIdentity, *, create: bool = True) -> Cart:
     cart = get_cart(identity, create=create)
     if not cart:
         raise AppError("Cart not found", 404, name="INVALID_CART")
+    # If this is a logged-in user's cart, drop stale session_id to avoid
+    # propagating guest session cookies in user flow.
+    if identity.user and getattr(cart, "session_id", None):
+        cart.session_id = None
+        cart = _save_cart(cart, message="Failed to save cart")
     return cart
 
 
@@ -198,6 +203,9 @@ def merge_carts(user_cart: Optional[Cart], guest_cart: Cart, user: User) -> Cart
             user_cart.items.append(clone)
             existing_map[key] = clone
 
+    # Ensure user cart does not carry session_id in logged-in flow
+    user_cart.user = user
+    user_cart.session_id = None
     saved = _save_cart(user_cart, message="Failed to merge carts")
 
     try:
