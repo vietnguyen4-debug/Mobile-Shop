@@ -1,19 +1,36 @@
 from typing import Optional
-
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
-
+from flask import current_app
 from .models import Checkout
 
 
 ACTIVE_STATUSES = ("pending", "processing")
 
+def _apply_expiration(checkout: Checkout) -> Checkout:
+    ttl_seconds = current_app.config.get("CHECKOUT_PENDING_TTL_SECONDS")
+    if not ttl_seconds or ttl_seconds <= 0:
+        checkout.expires_at = None
+        return checkout
+
+    status = getattr(checkout, "status", None)
+    # Pending/processing checkouts should eventually disappear if abandoned, but once
+    # they transition to a terminal state (completed/cancelled) we keep the record by
+    # clearing the TTL timestamp.
+    if status in ACTIVE_STATUSES:
+        checkout.expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+    else:
+        checkout.expires_at = None
+    return checkout
 
 def checkout_create(data: dict) -> Checkout:
     checkout = Checkout(**data)
+    checkout = _apply_expiration(checkout)
     return checkout.save()
 
 
 def checkout_save(checkout: Checkout) -> Checkout:
+    checkout = _apply_expiration(checkout)
     return checkout.save()
 
 
