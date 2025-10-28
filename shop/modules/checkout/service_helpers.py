@@ -122,6 +122,7 @@ def _create_anonymous_user(customer: CustomerInfo) -> User:
             first_name=customer.first_name,
             last_name=customer.last_name,
             phone=customer.phone,
+            is_active=False,
         )
         user.addresses = [
             Address(

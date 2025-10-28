@@ -83,11 +83,33 @@ def sanitize_session_id(session_id: Any) -> Optional[str]:
         raise AppError("Session identifier too long", 400, name="INVALID_SESSION")
     return cleaned
 
+def _mark_guest_inactive(user: User) -> None:
+    if getattr(user, "is_active", True):
+        try:
+            user.is_active = False
+            user.save()
+        except Exception:
+            # Failing to persist the inactive flag should not leak
+            # information or block guest checkout access.
+            pass
+
+
+def _is_guest_user(user: Optional[User]) -> bool:
+    if not user:
+        return False
+    username = getattr(user, "username", "") or ""
+    email = getattr(user, "email", "") or ""
+    if username.startswith("guest_") and email.endswith("@guest.local"):
+        _mark_guest_inactive(user)
+        return True
+    return False
+
 def ensure_checkout_access(
     checkout: Checkout, user: Optional[User], session_id: Optional[str]
 ) -> None:
     checkout_user = getattr(checkout, "user", None)
     checkout_session = getattr(checkout, "session_id", None)
+    guest_checkout = _is_guest_user(checkout_user)
 
     if user:
         if checkout_user and str(checkout_user.id) != str(user.id):
@@ -104,7 +126,7 @@ def ensure_checkout_access(
             )
         return
 
-    if checkout_user:
+    if checkout_user and not guest_checkout:
         raise AppError(
             "Checkout belongs to a user account",
             403,
