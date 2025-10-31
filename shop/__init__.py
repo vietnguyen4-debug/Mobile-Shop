@@ -47,4 +47,9 @@ def create_app(config_object=config.DevConfig):
             "data": {"status": "ok"},
             "error": None
         }
+
+    @app.get("/")
+    def root():
+        return health()
     return app
+
