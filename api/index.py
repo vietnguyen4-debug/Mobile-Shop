@@ -7,7 +7,7 @@ import awsgi
 from app import app as application
 
 
-HEALTH_PATH = "/api/health"
+IGNORED_PATHS = {"/favicon.ico", "/favicon.png"}
 FORWARDED_PATH_HEADERS = (
     "x-forwarded-uri",
     "x-forwarded-path",
@@ -37,11 +37,6 @@ def _clone_event_with_path(event: Optional[Dict[str, Any]], path: str) -> Dict[s
         normalized_event["requestContext"] = request_context
 
     return normalized_event
-
-
-def _ensure_health_path(event: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return a copy of the event that targets the /api/health endpoint."""
-    return _clone_event_with_path(event, HEALTH_PATH)
 
 
 def _extract_forwarded_path(event: Optional[Dict[str, Any]]) -> str:
@@ -79,7 +74,14 @@ def handler(event: Optional[Dict[str, Any]], context: Any):
         safe_event = copy.deepcopy(event or {})
 
     path = forwarded_path or safe_event.get("rawPath") or safe_event.get("path") or ""
-    if path in {"", "/"}:
-        safe_event = _ensure_health_path(safe_event)
+    if path in IGNORED_PATHS:
+        return {
+            "statusCode": 204,
+            "body": "",
+            "headers": {"cache-control": "no-store"},
+        }
+
+    if not path:
+        safe_event = _clone_event_with_path(safe_event, "/")
 
     return awsgi.response(application, safe_event, context)
