@@ -9,11 +9,16 @@ class _MongoEngineWrapper:
 
     def init_app(self, app):
         if not self._inited:
-            connect(
-                db=app.config["MONGODB_NAME"],
-                host=app.config["MONGODB_HOST"],
-                port=app.config["MONGODB_PORT"]
-            )
+            mongodb_uri = app.config.get("MONGODB_URI")
+
+            if mongodb_uri:
+                connect(host=mongodb_uri)
+            else:
+                connect(
+                    db=app.config["MONGODB_NAME"],
+                    host=app.config["MONGODB_HOST"],
+                    port=app.config["MONGODB_PORT"],
+                )
             self._inited = True
 
 db = _MongoEngineWrapper()
