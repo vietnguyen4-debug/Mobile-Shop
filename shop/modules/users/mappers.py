@@ -1,4 +1,7 @@
-def user_public(u) -> dict:
+from .models import Address, User
+
+
+def user_public(u: User) -> dict:
     return {
         "id": str(u.id),
         "username": u.username,
@@ -7,11 +10,11 @@ def user_public(u) -> dict:
         "last_name": u.last_name,
         "phone": u.phone,
         "avatar": u.avatar,
-        "role": u.role
+        "role": u.role,
     }
 
 
-def address_public(a) -> dict:
+def address_public(a: Address) -> dict:
     return {
         "id": str(a.id),
         "address_line": a.address_line,
