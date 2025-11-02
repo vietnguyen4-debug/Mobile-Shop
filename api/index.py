@@ -1,8 +1,7 @@
-import copy
-from typing import Any, Dict, Optional
+from typing import Callable, Iterable
 from urllib.parse import urlsplit
 
-import awsgi
+from werkzeug.wrappers import Response
 
 from app import app as application
 
@@ -19,42 +18,48 @@ FORWARDED_PATH_HEADERS = (
 )
 
 
-def _clone_event_with_path(event: Optional[Dict[str, Any]], path: str) -> Dict[str, Any]:
-    """Return a copy of the event with the request path replaced."""
-    original_event: Dict[str, Any] = event or {}
-    normalized_event = copy.deepcopy(original_event)
-    normalized_event["path"] = path
-    normalized_event["rawPath"] = path
+class _PathNormalizationMiddleware:
+    """Normalize forwarded paths before they reach the Flask app."""
 
-    request_context = normalized_event.get("requestContext")
-    if isinstance(request_context, dict):
-        request_context = copy.deepcopy(request_context)
-        http_context = request_context.get("http")
-        if isinstance(http_context, dict):
-            http_context = copy.deepcopy(http_context)
-            http_context["path"] = path
-            request_context["http"] = http_context
-        normalized_event["requestContext"] = request_context
+    def __init__(self, wsgi_app: Callable[[dict, Callable], Iterable[bytes]]):
+        self._wsgi_app = wsgi_app
 
-    return normalized_event
+    def __call__(self, environ: dict, start_response: Callable):
+        forwarded_path = _extract_forwarded_path(environ)
+
+        if forwarded_path:
+            environ = dict(environ)
+            environ["PATH_INFO"] = forwarded_path
+            environ["RAW_PATH_INFO"] = forwarded_path
+
+        path = environ.get("PATH_INFO", "") or ""
+
+        if not path:
+            environ = dict(environ)
+            environ["PATH_INFO"] = "/"
+            environ["RAW_PATH_INFO"] = "/"
+            path = "/"
+
+        if path in IGNORED_PATHS:
+            response = Response("", status=204)
+            response.headers["cache-control"] = "no-store"
+            return response(environ, start_response)
+
+        return self._wsgi_app(environ, start_response)
 
 
-def _extract_forwarded_path(event: Optional[Dict[str, Any]]) -> str:
-    """Extract the original request path from common forwarding headers."""
-    if not isinstance(event, dict):
-        return ""
-
-    headers = event.get("headers")
-    if not isinstance(headers, dict):
-        return ""
-
-    normalized_headers: Dict[str, str] = {}
-    for key, value in headers.items():
-        if isinstance(key, str) and isinstance(value, str):
-            normalized_headers[key.lower()] = value
+def _extract_forwarded_path(environ: dict) -> str:
+    headers = {}
+    for key, value in environ.items():
+        if not key.startswith("HTTP_"):
+            continue
+        if not isinstance(value, str):
+            continue
+        normalized_key = key[5:].lower().replace("_", "-")
+        headers[normalized_key] = value
 
     for header in FORWARDED_PATH_HEADERS:
-        raw_value = normalized_headers.get(header)
+        raw_value = headers.get(header)
         if not raw_value:
             continue
 
@@ -66,22 +71,7 @@ def _extract_forwarded_path(event: Optional[Dict[str, Any]]) -> str:
     return ""
 
 
-def handler(event: Optional[Dict[str, Any]], context: Any):
-    forwarded_path = _extract_forwarded_path(event)
-    if forwarded_path:
-        safe_event = _clone_event_with_path(event, forwarded_path)
-    else:
-        safe_event = copy.deepcopy(event or {})
+application.wsgi_app = _PathNormalizationMiddleware(application.wsgi_app)
 
-    path = forwarded_path or safe_event.get("rawPath") or safe_event.get("path") or ""
-    if path in IGNORED_PATHS:
-        return {
-            "statusCode": 204,
-            "body": "",
-            "headers": {"cache-control": "no-store"},
-        }
-
-    if not path:
-        safe_event = _clone_event_with_path(safe_event, "/")
-
-    return awsgi.response(application, safe_event, context)
+# Expose the Flask application as "app" so the Vercel runtime can pick it up
+app = application
