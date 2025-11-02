@@ -71,7 +71,6 @@ def _extract_forwarded_path(environ: dict) -> str:
     return ""
 
 
-
 application.wsgi_app = _PathNormalizationMiddleware(application.wsgi_app)
 
 # Expose the Flask application as "app" so the Vercel runtime can pick it up
