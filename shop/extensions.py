@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_caching import Cache
@@ -12,6 +14,15 @@ class _MongoEngineWrapper:
             mongodb_uri = app.config.get("MONGODB_URI")
 
             if mongodb_uri:
+                db_name = app.config.get("MONGODB_NAME")
+
+                if db_name:
+                    parsed = urlparse(mongodb_uri)
+
+                    if not parsed.path or parsed.path == "/":
+                        connect(db=db_name, host=mongodb_uri)
+                        self._inited = True
+                        return
                 connect(host=mongodb_uri)
             else:
                 connect(
