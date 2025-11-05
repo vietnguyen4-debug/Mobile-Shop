@@ -5,6 +5,9 @@ from werkzeug.wrappers import Response
 
 from app import app as application
 
+if hasattr(application, "json"):
+    application.json.sort_keys = False
+
 
 IGNORED_PATHS = {"/favicon.ico", "/favicon.png"}
 FORWARDED_PATH_HEADERS = (

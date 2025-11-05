@@ -17,6 +17,9 @@ def create_app(config_object=config.DevConfig):
     app = Flask(__name__)
     app.config.from_object(config_object)
 
+    if hasattr(app, "json"):
+        app.json.sort_keys = False
+
     db.init_app(app)
     jwt.init_app(app)
     cors.init_app(app, supports_credentials=True)
