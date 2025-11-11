@@ -203,7 +203,7 @@ def _invalidate_subcategory_cache(*identifiers: str, category_ids: Optional[List
 
 
 def _invalidate_product_cache(
-        *identifiers: str,
+         *identifiers: str,
         category_ids: Optional[List[str]] = None,
         subcategory_ids: Optional[List[str]] = None,
         segments: Optional[List[str]] = None,
@@ -215,9 +215,31 @@ def _invalidate_product_cache(
 
     Args:
         affected_pages: Specific page numbers to invalidate (e.g., [1])
+        When omitted and ``invalidate_all_pages`` is False, the first
+            ``PRODUCT_PAGE_INVALIDATION_DEPTH`` pages are invalidated.
         invalidate_all_pages: If True, bump global list version (affects all pages)
     """
-    if invalidate_all_pages:
+    pages_to_bump: List[int] = []
+    if not invalidate_all_pages:
+        # Derive target pages either from provided list or default depth
+        unique_pages = []
+        seen = set()
+        candidates = affected_pages if affected_pages else (
+            list(range(1, PRODUCT_PAGE_INVALIDATION_DEPTH + 1))
+            if PRODUCT_PAGE_INVALIDATION_DEPTH > 0 else []
+        )
+        for page in candidates:
+            try:
+                page_num = int(page)
+            except (TypeError, ValueError):
+                continue
+            if page_num <= 0 or page_num in seen:
+                continue
+            seen.add(page_num)
+            unique_pages.append(page_num)
+        pages_to_bump = unique_pages
+
+    if invalidate_all_pages or not pages_to_bump:
         # Global invalidation - affects all pages
         _bump_version("product", "list")
     elif affected_pages:
@@ -309,7 +331,7 @@ def _int_env(name: str, default: int) -> int:
 
 DEFAULT_CACHE_TIMEOUT = _int_env("CATALOG_CACHE_TIMEOUT", _int_env("CACHE_DEFAULT_TIMEOUT", 300))
 SUGGEST_CACHE_TIMEOUT = _int_env("CATALOG_SUGGEST_CACHE_TIMEOUT", 60)
-
+PRODUCT_PAGE_INVALIDATION_DEPTH = _int_env("CATALOG_CACHE_PAGE_INVALIDATION_DEPTH", 3)
 
 # ============= FINDER HELPERS =============
 
