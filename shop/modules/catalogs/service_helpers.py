@@ -60,6 +60,21 @@ def _versioned_make_name(version_resolver):
 
     return factory
 
+def _extract_page_argument(args, kwargs, *, index: int = 0, key: str = "page") -> Optional[str]:
+    """Resolve the page argument from positional/keyword inputs."""
+
+    page = kwargs.get(key)
+    if page is None and len(args) > index:
+        page = args[index]
+
+    if page is None:
+        return None
+
+    try:
+        return str(int(page))
+    except (TypeError, ValueError):
+        return str(page)
+
 
 def _compose_token(*parts: Optional[str]) -> str:
     filtered = [part for part in parts if part]
@@ -96,23 +111,24 @@ def _product_item_version(slug_or_id: str, *_args, **_kwargs) -> str:
     )
 
 
-def _product_list_version(*_args, **_kwargs) -> str:
-    return _compose_token(
-        _get_version("product", "list"),
-        _get_version("product", "segment:core"),
-        _get_version("product", "segment:media"),
-        _get_version("product", "segment:specs"),
-    )
+def _product_list_version(*args, **kwargs) -> str:
+    page = _extract_page_argument(args, kwargs)
+    tokens = [_get_version("product", "list")]
+    if page:
+        tokens.append(_get_version("product", f"page:{page}"))
+    return _compose_token(*tokens)
 
 
-def _product_list_by_sub_version(sub_id: str, *_args, **_kwargs) -> str:
-    return _compose_token(
+def _product_list_by_sub_version(sub_id: str, *args, **kwargs) -> str:
+    page = _extract_page_argument(args, kwargs)
+    tokens = [
         _get_version("product", "list"),
-        _get_version("product", "segment:core"),
-        _get_version("product", "segment:media"),
-        _get_version("product", "segment:specs"),
         _get_version("product", f"sub:{sub_id}"),
-    )
+    ]
+    if page:
+        tokens.append(_get_version("product", f"page:{page}"))
+        tokens.append(_get_version("product", f"sub:{sub_id}:page:{page}"))
+    return _compose_token(*tokens)
 
 
 def _product_media_version(slug_or_id: str, *_args, **_kwargs) -> str:
