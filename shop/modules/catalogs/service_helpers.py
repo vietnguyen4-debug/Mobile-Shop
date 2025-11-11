@@ -191,22 +191,46 @@ def _invalidate_product_cache(
         category_ids: Optional[List[str]] = None,
         subcategory_ids: Optional[List[str]] = None,
         segments: Optional[List[str]] = None,
+        affected_pages: Optional[List[int]] = None,
+        invalidate_all_pages: bool = True,
 ) -> None:
-    _bump_version("product", "list")
+    """
+    Invalidate product cache with page-level granularity.
+
+    Args:
+        affected_pages: Specific page numbers to invalidate (e.g., [1])
+        invalidate_all_pages: If True, bump global list version (affects all pages)
+    """
+    if invalidate_all_pages:
+        # Global invalidation - affects all pages
+        _bump_version("product", "list")
+    elif affected_pages:
+        # Selective invalidation - only specific pages
+        for page_num in affected_pages:
+            _bump_version("product", f"page:{page_num}")
+            # Also invalidate sub-specific pages if subcategory_ids provided
+            if subcategory_ids:
+                for sid in subcategory_ids:
+                    _bump_version("product", f"sub:{sid}:page:{page_num}")
+
     _bump_version("product", "suggest")
+
     if category_ids:
         for cid in category_ids:
             if cid:
                 _bump_version("product", f"cat:{cid}")
+
     if subcategory_ids:
         for sid in subcategory_ids:
             if sid:
                 _bump_version("product", f"sub:{sid}")
+
     for ident in identifiers:
         if ident:
             _bump_version("product", ident)
             _bump_version("product", f"media:{ident}")
             _bump_version("product", f"spec:{ident}")
+
     unique_segments = []
     for segment in segments or []:
         if segment and segment not in unique_segments:
@@ -222,8 +246,16 @@ def _invalidate_product_with_ids(
         *additional_identifiers: str,
         additional_cat_ids: Optional[List[str]] = None,
         additional_sub_ids: Optional[List[str]] = None,
+        affected_pages: Optional[List[int]] = None,
+        invalidate_all_pages: bool = True,
 ) -> None:
-    """Invalidate product cache with collected IDs."""
+    """
+    Invalidate product cache with collected IDs.
+
+    Args:
+        affected_pages: Specific pages to invalidate (default: None = all pages)
+        invalidate_all_pages: Whether to invalidate all pages (default: True)
+    """
     cat_ids, sub_ids = _collect_invalidation_ids(product)
 
     if additional_cat_ids:
@@ -239,6 +271,8 @@ def _invalidate_product_with_ids(
         category_ids=cat_ids,
         subcategory_ids=sub_ids,
         segments=segments,
+        affected_pages=affected_pages,
+        invalidate_all_pages=invalidate_all_pages,
     )
 
 

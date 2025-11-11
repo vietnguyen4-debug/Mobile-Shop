@@ -337,11 +337,15 @@ def s_product_create(payload: dict) -> dict:
             "orphan_reason": payload.get("orphan_reason", None),
         })
         result = product_public(p)
+
+        # Only invalidate page 1 - new products appear at the top
         _invalidate_product_with_ids(
             result.get("slug"),
             p,
             ["core", "media", "specs"],
             result.get("id"),
+            affected_pages=[1],
+            invalidate_all_pages=False,
         )
         return result
     except MongoValidationError as e:
@@ -509,12 +513,15 @@ def s_product_delete(slug_or_id: str) -> None:
         pid = str(getattr(p, "id", ""))
 
         prod_delete(p)
+
+        # Delete affects all pages (items shift)
         _invalidate_product_with_ids(
             slug_or_id,
             p,
             ["core", "media", "specs"],
             slug,
             pid,
+            invalidate_all_pages=True,  # Delete affects pagination
         )
     except AppError:
         raise
