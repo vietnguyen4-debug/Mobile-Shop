@@ -153,7 +153,8 @@ def upsert_item(cart: Cart, product: Product, quantity: int) -> Cart:
         new_item = CartItem(product=product, quantity=quantity)
         new_item.created_at = now
         new_item.updated_at = now
-        cart.items = list(cart.items or [])
+        if not cart.items:
+            cart.items = []
         cart.items.append(new_item)
     return _save_cart(cart, message="Failed to save cart")
 

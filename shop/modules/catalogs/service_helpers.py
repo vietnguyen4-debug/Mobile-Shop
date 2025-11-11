@@ -24,10 +24,13 @@ def _find_raw(kind: Kind, slug_or_id: str):
         return repo.sub_get_by_id(oid) if oid else None
 
     if kind == "product":
+        oid = parse_oid(slug_or_id)
+        if oid:
+            obj = repo.prod_get_by_id(oid)
+            if obj: return obj
         obj = repo.prod_get_by_slug(slug_or_id)
         if obj: return obj
-        oid = parse_oid(slug_or_id)
-        return repo.prod_get_by_id(oid) if oid else None
+        return None
 
     return None
 
