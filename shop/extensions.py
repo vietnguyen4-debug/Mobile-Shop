@@ -1,5 +1,6 @@
 from urllib.parse import urlparse
 
+import redis
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_caching import Cache
@@ -32,7 +33,28 @@ class _MongoEngineWrapper:
                 )
             self._inited = True
 
+class _CacheWrapper(Cache):
+    def __init__(self):
+        super().__init__()
+        self._inited = False
+        self.client = None
+
+    def init_app(self, app, config=None):
+        if not self._inited:
+            redis_url = app.config.get("CACHE_REDIS_URL")
+
+            if not redis_url:
+                raise RuntimeError(
+                    "CACHE_REDIS_URL must be configured before initializing cache"
+                )
+
+            self.client = redis.from_url(redis_url, decode_responses=True)
+            app.extensions["redis_client"] = self.client
+
+            super().init_app(app, config=config)
+            self._inited = True
+
 db = _MongoEngineWrapper()
 jwt = JWTManager()
 cors = CORS()
-cache = Cache()
+cache = _CacheWrapper()

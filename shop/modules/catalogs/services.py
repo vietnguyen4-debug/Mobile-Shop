@@ -1,16 +1,23 @@
-from typing import List
-
 from bson.errors import InvalidId
 from mongoengine import ValidationError as MongoValidationError
+
 from .mappers import _media_public, _spec_public
-from .service_helpers import  _parse_and_get_subcategory, \
-    _validate_category_subcategory_relation, _safe_get_category_by_id, _safe_parse_oid
+from .service_helpers import *
+from .service_helpers import _invalidate_category_cache, _versioned_make_name, _category_item_version, \
+    _category_list_version, _invalidate_product_cache, _safe_get_category_by_id, _invalidate_subcategory_cache, \
+    _subcategory_item_version, _subcategory_by_category_version, _safe_parse_oid, _parse_and_get_subcategory, \
+    _validate_category_subcategory_relation, _build_media, _build_specs,  \
+    _product_list_version, _product_item_version, _product_list_by_sub_version, \
+    _product_media_version, _normalize_media_embedded, _normalize_specs_embedded, _product_spec_version, \
+    _invalidate_keyword_cache, _product_suggest_version, _invalidate_product_with_ids, _validate_product_instance
 from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
 from .mappers import *
-from .models import Media, Spec
-from .service_helpers import *
+from .models import Product
+from ...extensions import cache
+
+
 # ---- CATEGORY ----
 def s_category_create(payload: dict) -> dict:
     require_fields(payload, "name")
@@ -40,11 +47,17 @@ def s_category_create(payload: dict) -> dict:
             "description": payload.get("description"),
             "hot": bool(payload.get("hot", False)),
         })
-        return cat_public(c)
+        result = cat_public(c)
+        _invalidate_category_cache(result.get("slug"), result.get("id"))
+        return result
     except Exception as e:
         raise AppError(f"Failed to create category: {str(e)}", 500, name="DATABASE_ERROR")
 
 
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_category_item_version),
+)
 def s_category_get(slug_or_id: str) -> dict:
     try:
         c = find_by_slug_or_id("category", slug_or_id)
@@ -54,11 +67,17 @@ def s_category_get(slug_or_id: str) -> dict:
     except Exception as e:
         raise AppError(f"Failed to retrieve category: {str(e)}", 500, name="DATABASE_ERROR")
 
+
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_category_list_version),
+)
 def s_category_list() -> dict:
     try:
         return {"items": [cat_public(c) for c in cat_list_all()]}
     except Exception as e:
         raise AppError(f"Failed to list categories: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_category_update(slug_or_id: str, payload: dict) -> dict:
     try:
@@ -67,6 +86,9 @@ def s_category_update(slug_or_id: str, payload: dict) -> dict:
         raise
     except Exception as e:
         raise AppError(f"Failed to find category: {str(e)}", 500, name="DATABASE_ERROR")
+
+    original_slug = getattr(c, "slug", None)
+    original_id = str(getattr(c, "id", ""))
 
     data = {}
     if "name" in payload and payload["name"]:
@@ -87,15 +109,31 @@ def s_category_update(slug_or_id: str, payload: dict) -> dict:
 
     try:
         c = cat_update(c, data)
-        return cat_public(c)
+        result = cat_public(c)
+        _invalidate_category_cache(
+            slug_or_id,
+            original_slug,
+            original_id,
+            result.get("slug"),
+            result.get("id"),
+        )
+        return result
     except Exception as e:
         raise AppError(f"Failed to update category: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 def s_category_delete(slug_or_id: str) -> None:
     try:
         c = find_by_slug_or_id("category", slug_or_id)
+        slug = getattr(c, "slug", None)
+        cid = str(getattr(c, "id", ""))
         mark_products_orphan_by_category(c.id)
         cat_delete(c)
+        _invalidate_category_cache(slug_or_id, slug, cid)
+        _invalidate_product_cache(
+            category_ids=[cid] if cid else None,
+            segments=["core"],
+        )
     except AppError:
         raise
     except Exception as e:
@@ -125,11 +163,21 @@ def s_subcategory_create(payload: dict) -> dict:
             "category": cat,
             "description": payload.get("description"),
         })
-        return sub_public(s)
+        result = sub_public(s)
+        _invalidate_subcategory_cache(
+            result.get("slug"),
+            result.get("id"),
+            category_ids=[str(cat.id) if cat else None],
+        )
+        return result
     except Exception as e:
         raise AppError(f"Failed to create subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
 
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_subcategory_item_version),
+)
 def s_subcategory_get(slug_or_id: str) -> dict:
     try:
         s = find_by_slug_or_id("subcategory", slug_or_id)
@@ -140,6 +188,10 @@ def s_subcategory_get(slug_or_id: str) -> dict:
         raise AppError(f"Failed to retrieve subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
 
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_subcategory_by_category_version),
+)
 def s_subcategory_list_by_category(category_id: str) -> dict:
     cat_oid = _safe_parse_oid(category_id, "Category")
 
@@ -156,6 +208,10 @@ def s_subcategory_update(slug_or_id: str, payload: dict) -> dict:
         raise
     except Exception as e:
         raise AppError(f"Failed to find subcategory: {str(e)}", 500, name="DATABASE_ERROR")
+
+    original_slug = getattr(s, "slug", None)
+    original_id = str(getattr(s, "id", ""))
+    original_cat_id = str(getattr(getattr(s, "category", None), "id", "")) if getattr(s, "category", None) else None
 
     data = {}
     if "name" in payload:
@@ -186,7 +242,18 @@ def s_subcategory_update(slug_or_id: str, payload: dict) -> dict:
 
     try:
         s = sub_update(s, data)
-        return sub_public(s)
+        result = sub_public(s)
+        new_cat_id = result.get("category_id")
+        category_ids = list({cid for cid in [original_cat_id, new_cat_id] if cid}) or None
+        _invalidate_subcategory_cache(
+            slug_or_id,
+            original_slug,
+            original_id,
+            result.get("slug"),
+            result.get("id"),
+            category_ids=category_ids,
+        )
+        return result
     except Exception as e:
         raise AppError(f"Failed to update subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -194,8 +261,23 @@ def s_subcategory_update(slug_or_id: str, payload: dict) -> dict:
 def s_subcategory_delete(slug_or_id: str) -> None:
     try:
         s = find_by_slug_or_id("subcategory", slug_or_id)
+        slug = getattr(s, "slug", None)
+        sid = str(getattr(s, "id", ""))
+        cat_id = str(getattr(getattr(s, "category", None), "id", "")) if getattr(s, "category", None) else None
         mark_products_orphan_by_subcategory(s.id)
         sub_delete(s)
+        category_ids = [cid for cid in [cat_id] if cid] or None
+        _invalidate_subcategory_cache(
+            slug_or_id,
+            slug,
+            sid,
+            category_ids=category_ids,
+        )
+        _invalidate_product_cache(
+            subcategory_ids=[sid] if sid else None,
+            category_ids=category_ids,
+            segments=["core"],
+        )
     except AppError:
         raise
     except Exception as e:
@@ -203,112 +285,6 @@ def s_subcategory_delete(slug_or_id: str) -> None:
 
 
 # -----PRODUCT-----
-def _build_media(items: List[dict]) -> List[Media]:
-    out: List[Media] = []
-    pending: List[Tuple[dict, int]] = []
-    max_order = -1
-
-    for index, m in enumerate(items or []):
-        url = (m.get("url") or "").strip()
-        if not url:
-            raise AppError("Media url is required", 400, name="INVALID_MEDIA")
-
-        raw_order = m.get("order")
-        has_explicit_order = raw_order is not None and f"{raw_order}".strip() != ""
-        order_value = 0
-
-        if has_explicit_order:
-            try:
-                order_value = int(raw_order)
-            except (TypeError, ValueError):
-                has_explicit_order = False
-            else:
-                max_order = max(max_order, order_value)
-        if not has_explicit_order:
-            pending.append((m, index))
-            continue
-
-        out.append(Media(
-            id=m.get("id"),
-            kind=(m.get("kind") or "image"),
-            url=url,
-            alt=m.get("alt"),
-            is_primary=bool(m.get("is_primary", False)),
-            order=order_value,
-        ))
-
-    next_order = max_order + 1 if max_order >= 0 else 0
-
-    for m, _ in sorted(pending, key=lambda item: item[1]):
-        out.append(Media(
-            id=m.get("id"),
-            kind=(m.get("kind") or "image"),
-            url=(m.get("url") or "").strip(),
-            alt=m.get("alt"),
-            is_primary=bool(m.get("is_primary", False)),
-            order=next_order,
-        ))
-        next_order += 1
-
-    if out and not any(getattr(x, "is_primary", False) for x in out):
-        sorted(out, key=lambda x: (getattr(x, "order", 0) or 0))[0].is_primary = True
-    out = sorted(out, key=lambda x: (
-        not bool(getattr(x, "is_primary", False)),
-        getattr(x, "order", 0) or 0
-    ))
-
-    for idx, media in enumerate(out):
-        media.order = idx
-    return out
-
-def _build_specs(items: List[dict]) -> List[Spec]:
-    out: List[Spec] = []
-    for s in items or []:
-        out.append(Spec(
-            id=s.get("id"),
-            group=s.get("group"),
-            key=s.get("key"),
-            value=s.get("value"),
-            order=int(s.get("order") or 0),
-        ))
-    # sort: order → group → key (tăng dần)
-    out = sorted(out, key=lambda sp: (
-        getattr(sp, "order", 0) or 0,
-        (getattr(sp, "group", "") or ""),
-        (getattr(sp, "key", "") or "")
-    ))
-    return out
-
-def _normalize_media_embedded(p: Product) -> Product:
-    try:
-        items = [{
-            "id": m.id, "kind": m.kind, "url": m.url, "alt": m.alt,
-            "is_primary": bool(getattr(m, "is_primary", False)),
-            "order": int(getattr(m, "order", 0) or 0),
-        } for m in (p.media or [])]
-        p.media = _build_media(items)
-        return p.save()
-    except AppError:
-        raise
-    except Exception as e:
-        raise AppError(f"Failed to normalize media: {str(e)}", 500, name="DATABASE_ERROR")
-
-
-def _normalize_specs_embedded(p: Product) -> Product:
-    try:
-        items = [{
-            "id": s.id, "group": s.group, "key": s.key,
-            "value": s.value, "order": int(getattr(s, "order", 0) or 0),
-        } for s in (p.specs or [])]
-        p.specs = _build_specs(items)
-        return p.save()
-    except AppError:
-        raise
-    except Exception as e:
-        raise AppError(f"Failed to normalize specs: {str(e)}", 500, name="DATABASE_ERROR")
-
-
-
 def s_product_create(payload: dict) -> dict:
     require_fields(payload, "name", "price")
     name = payload["name"].strip()
@@ -360,14 +336,24 @@ def s_product_create(payload: dict) -> dict:
             "is_orphan": payload.get("is_orphan", False),
             "orphan_reason": payload.get("orphan_reason", None),
         })
-        return product_public(p)
+        result = product_public(p)
+        _invalidate_product_with_ids(
+            result.get("slug"),
+            p,
+            ["core", "media", "specs"],
+            result.get("id"),
+        )
+        return result
     except MongoValidationError as e:
         raise AppError(f"Database validation error: {str(e)}", 400, name="VALIDATION_ERROR")
     except Exception as e:
         raise AppError(f"Failed to create product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_item_version),
+)
 def s_product_get(slug_or_id: str) -> dict:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
@@ -378,7 +364,10 @@ def s_product_get(slug_or_id: str) -> dict:
         raise AppError(f"Failed to retrieve product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_list_version),
+)
 def s_product_list(page, limit) -> dict:
     try:
         p, l = parse_pagination(page, limit)
@@ -392,6 +381,10 @@ def s_product_list(page, limit) -> dict:
         raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
 
 
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_list_by_sub_version),
+)
 def s_product_list_by_sub(sub_id, page, limit, *, active_only=True) -> dict:
     try:
         p, l = parse_pagination(page, limit)
@@ -420,6 +413,19 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
         raise
     except Exception as e:
         raise AppError(f"Failed to find product: {str(e)}", 500, name="DATABASE_ERROR")
+
+    original_slug = getattr(p, "slug", None)
+    original_id = str(getattr(p, "id", ""))
+    original_cat_id = (
+        str(getattr(getattr(p, "category", None), "id", ""))
+        if getattr(p, "category", None)
+        else None
+    )
+    original_sub_id = (
+        str(getattr(getattr(p, "subcategory", None), "id", ""))
+        if getattr(p, "subcategory", None)
+        else None
+    )
 
     data = {}
     need_new_slug = False
@@ -477,25 +483,50 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
 
     try:
         p = prod_update(p, data)
-        return product_public(p)
+        result = product_public(p)
+        _invalidate_product_with_ids(
+            slug_or_id,
+            p,
+            ["core"],
+            original_slug,
+            original_id,
+            result.get("slug"),
+            result.get("id"),
+            additional_cat_ids=[original_cat_id] if original_cat_id else None,
+            additional_sub_ids=[original_sub_id] if original_sub_id else None,
+        )
+        return result
     except MongoValidationError as e:
         raise AppError(f"Database validation error: {str(e)}", 400, name="VALIDATION_ERROR")
     except Exception as e:
         raise AppError(f"Failed to update product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-
 def s_product_delete(slug_or_id: str) -> None:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
+        slug = getattr(p, "slug", None)
+        pid = str(getattr(p, "id", ""))
+
         prod_delete(p)
+        _invalidate_product_with_ids(
+            slug_or_id,
+            p,
+            ["core", "media", "specs"],
+            slug,
+            pid,
+        )
     except AppError:
         raise
     except Exception as e:
         raise AppError(f"Failed to delete product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-#------MEDIA-------
+# ------MEDIA-------
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_media_version),
+)
 def s_media_list(slug_or_id: str) -> dict:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
@@ -516,15 +547,14 @@ def s_media_add(slug_or_id: str, payload: dict):
     except Exception as e:
         raise AppError(f"Failed to find product: {str(e)}", 500, name="DATABASE_ERROR")
 
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    if len(p.media) >= MAX_MEDIA:
-        raise AppError(f"Too many media items (max {MAX_MEDIA})", 400, name="INVALID_MEDIA")
+    _validate_product_instance(p, MAX_MEDIA, "media")
 
     try:
         p = media_upsert(p, payload)
         p = _normalize_media_embedded(p)
-        return {"items": [_media_public(m) for m in p.media]}
+        result = {"items": [_media_public(m) for m in p.media]}
+        _invalidate_product_with_ids(slug_or_id, p, ["media"])
+        return result
     except AppError:
         raise
     except Exception as e:
@@ -533,24 +563,24 @@ def s_media_add(slug_or_id: str, payload: dict):
 
 def s_media_update(slug_or_id: str, media_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    if len(p.media or []) >= MAX_MEDIA:
-        raise AppError(f"Too many media items (max {MAX_MEDIA})", 400, name="INVALID_MEDIA")
+    _validate_product_instance(p, MAX_MEDIA, "media")
+
     payload = dict(payload or {})
     payload["id"] = media_id
     p = media_upsert(p, payload)
     p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+    result = {"items": [_media_public(m) for m in p.media]}
+    _invalidate_product_with_ids(slug_or_id, p, ["media"])
+    return result
 
 
 def s_media_delete(slug_or_id: str, media_id: str) -> None:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
-        if not isinstance(p, Product):
-            raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+        _validate_product_instance(p, MAX_MEDIA, "media")
         media_delete(p, media_id)
         _normalize_media_embedded(p)
+        _invalidate_product_with_ids(slug_or_id, p, ["media"])
     except AppError:
         raise
     except Exception as e:
@@ -561,13 +591,18 @@ def s_media_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
     if not isinstance(p, Product):
         raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+
     items = (payload or {}).get("items") or (payload or {}).get("media") or []
     built = _build_media(items)
     if len(built) >= MAX_MEDIA:
         raise AppError(f"Too many media items (max {MAX_MEDIA})", 400, name="INVALID_MEDIA")
+
     p = media_replace(p, items)
     p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+    result = {"items": [_media_public(m) for m in p.media]}
+    _invalidate_product_with_ids(slug_or_id, p, ["media"])
+    return result
+
 
 def s_media_reorder(slug_or_id: str, order_ids: List[str]) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -575,9 +610,13 @@ def s_media_reorder(slug_or_id: str, order_ids: List[str]) -> dict:
         raise AppError("Product not found", 404, name="INVALID_PRODUCT")
     if len(order_ids) != len(p.media or []):
         raise AppError("Invalid order ids", 400, name="INVALID_ORDER_IDS")
+
     p = media_reorder(p, order_ids)
     p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+    result = {"items": [_media_public(m) for m in p.media]}
+    _invalidate_product_with_ids(slug_or_id, p, ["media"])
+    return result
+
 
 def s_media_set_primary(slug_or_id: str, media_id: str) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -586,9 +625,16 @@ def s_media_set_primary(slug_or_id: str, media_id: str) -> dict:
 
     p = media_set_primary(p, media_id)
     p = _normalize_media_embedded(p)
-    return {"items": [_media_public(m) for m in p.media]}
+    result = {"items": [_media_public(m) for m in p.media]}
+    _invalidate_product_with_ids(slug_or_id, p, ["media"])
+    return result
 
-#------SPECS--------
+
+# ------SPECS--------
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_spec_version),
+)
 def s_specs_list(slug_or_id: str) -> dict:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
@@ -603,33 +649,35 @@ def s_specs_list(slug_or_id: str) -> dict:
 def s_specs_add(slug_or_id: str, payload: dict):
     require_fields(payload, "group", "key")
     p = find_by_slug_or_id("product", slug_or_id)
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    if len(p.specs) >= MAX_SPECS:
-        raise AppError(f"Too many specs items (max {MAX_SPECS})", 400, name="INVALID_SPECS")
+    _validate_product_instance(p, MAX_SPECS, "specs")
+
     p = spec_upsert(p, payload)
     p = _normalize_specs_embedded(p)
-    return {"items": [_spec_public(s) for s in p.specs]}
+    result = {"items": [_spec_public(s) for s in p.specs]}
+    _invalidate_product_with_ids(slug_or_id, p, ["specs"])
+    return result
+
 
 def s_specs_update(slug_or_id: str, spec_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
-    if not isinstance(p, Product):
-        raise AppError("Product not found", 404, name="INVALID_PRODUCT")
-    if len(p.specs or []) >= MAX_SPECS:
-        raise AppError(f"Too many specs items (max {MAX_SPECS})", 400, name="INVALID_SPECS")
+    _validate_product_instance(p, MAX_SPECS, "specs")
+
     payload = dict(payload or {})
     payload["id"] = spec_id
     p = spec_upsert(p, payload)
     p = _normalize_specs_embedded(p)
-    return {"items": [_spec_public(s) for s in p.specs]}
+    result = {"items": [_spec_public(s) for s in p.specs]}
+    _invalidate_product_with_ids(slug_or_id, p, ["specs"])
+    return result
+
 
 def s_specs_delete(slug_or_id: str, spec_id: str) -> None:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
-        if not isinstance(p, Product):
-            raise AppError("Product not found", 404, name="INVALID_PRODUCT")
+        _validate_product_instance(p, MAX_SPECS, "specs")
         spec_delete(p, spec_id)
         _normalize_specs_embedded(p)
+        _invalidate_product_with_ids(slug_or_id, p, ["specs"])
     except AppError:
         raise
     except Exception as e:
@@ -642,9 +690,13 @@ def s_specs_replace(slug_or_id: str, payload: dict) -> dict:
     built = _build_specs(items)
     if len(built) > MAX_SPECS:
         raise AppError(f"Too many specs items (max {MAX_SPECS})", 400, name="INVALID_SPECS")
+
     p = specs_replace(p, items)
     p = _normalize_specs_embedded(p)
-    return {"items": [_spec_public(s) for s in p.specs]}
+    result = {"items": [_spec_public(s) for s in p.specs]}
+    _invalidate_product_with_ids(slug_or_id, p, ["specs"])
+    return result
+
 
 def s_specs_reorder(slug_or_id: str, order_ids: List[str]) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
@@ -652,11 +704,15 @@ def s_specs_reorder(slug_or_id: str, order_ids: List[str]) -> dict:
         raise AppError("Product not found", 404, name="INVALID_PRODUCT")
     if len(order_ids) != len(p.specs or []):
         raise AppError("Invalid order ids", 400, name="INVALID_ORDER_IDS")
+
     p = specs_reorder(p, order_ids)
     p = _normalize_specs_embedded(p)
-    return {"items": [_spec_public(s) for s in p.specs]}
+    result = {"items": [_spec_public(s) for s in p.specs]}
+    _invalidate_product_with_ids(slug_or_id, p, ["specs"])
+    return result
 
-#------KEYWORD------
+
+# ------KEYWORD------
 def s_keyword_list(slug_or_id: str) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
     items = pk_list_by_product(str(p.id)) or []
@@ -676,7 +732,7 @@ def s_keyword_upsert(slug_or_id: str, payload: dict):
     for item in items:
         kw = (item.get("keyword") or "").strip()
         if not kw:
-            continue  # Skip empty keywords
+            continue
         weight = item.get("weight") or 1
         rec = pk_upsert(p, kw, weight)
         results.append(rec)
@@ -684,14 +740,18 @@ def s_keyword_upsert(slug_or_id: str, payload: dict):
     if not results:
         raise AppError("No valid keywords provided", 400, name="INVALID_KEYWORD")
 
-    return {"items": [kw_public(x) for x in results]}
+    result = {"items": [kw_public(x) for x in results]}
+    _invalidate_keyword_cache()
+    return result
 
 
 def s_keyword_bulk_replace(slug_or_id: str, payload: dict) -> dict:
     p = find_by_slug_or_id("product", slug_or_id)
     items = (payload or {}).get("items") or (payload or {}).get("keywords") or []
     out = pk_bulk_replace(p, items) or []
-    return {"items": [kw_public(x) for x in out]}
+    result = {"items": [kw_public(x) for x in out]}
+    _invalidate_keyword_cache()
+    return result
 
 
 def s_keyword_delete(slug_or_id: str, keyword_or_id: str) -> None:
@@ -710,8 +770,13 @@ def s_keyword_delete(slug_or_id: str, keyword_or_id: str) -> None:
         raise AppError("Keyword not found", 404, name="KEYWORD_NOT_FOUND")
 
     pk_delete(rec)
+    _invalidate_keyword_cache()
 
 
+@cache.memoize(
+    timeout=SUGGEST_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_suggest_version),
+)
 def s_keyword_suggest(keyword: str, limit: int = 20) -> dict:
     try:
         limit = int(limit)

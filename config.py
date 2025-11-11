@@ -11,7 +11,9 @@ class DevConfig:
     CHECKOUT_PENDING_TTL_SECONDS = int(
         os.environ.get("CHECKOUT_PENDING_TTL_SECONDS", 24 * 60 * 60)
     )
-    CACHE_TYPE = "SimpleCache"
+    CACHE_TYPE = os.environ.get("CACHE_TYPE", "RedisCache")
+    CACHE_DEFAULT_TIMEOUT = int(os.environ.get("CACHE_DEFAULT_TIMEOUT", 300))
+    CACHE_REDIS_URL = os.environ["CACHE_REDIS_URL"]
     JSON_SORT_KEYS = False
     JWT_TOKEN_LOCATION = ["headers", "cookies"]
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=1)
