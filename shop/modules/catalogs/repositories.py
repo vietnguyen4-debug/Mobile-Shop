@@ -70,6 +70,7 @@ def prod_search_by_name(keyword: str, page: int, limit: int, *, active_only=True
     if not kw:
         return [], 0
 
+
     qs = Product.objects(name__icontains=kw)
     if active_only:
         qs = qs.filter(is_active=True, is_orphan=False)
