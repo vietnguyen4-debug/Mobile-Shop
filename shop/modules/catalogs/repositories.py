@@ -65,6 +65,19 @@ def prod_list_by_sub(sub_oid: ObjectId, page: int, limit: int, *, active_only=Tr
     items = list(qs.order_by("-created_at").skip((page-1)*limit).limit(limit))
     return items, total
 
+def prod_search_by_name(keyword: str, page: int, limit: int, *, active_only=True) -> Tuple[list[Product], int]:
+    kw = (keyword or "").strip()
+    if not kw:
+        return [], 0
+
+    qs = Product.objects(name__icontains=kw)
+    if active_only:
+        qs = qs.filter(is_active=True, is_orphan=False)
+
+    total = qs.count()
+    items = list(qs.order_by("-created_at").skip((page - 1) * limit).limit(limit))
+    return items, total
+
 def prod_insert(data: dict) -> Product:
     return Product(**data).save()
 

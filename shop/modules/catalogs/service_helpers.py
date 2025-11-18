@@ -80,6 +80,10 @@ def _compose_token(*parts: Optional[str]) -> str:
     filtered = [part for part in parts if part]
     return "|".join(filtered)
 
+def _normalize_search_keyword(keyword: Optional[str]) -> str:
+    if keyword is None:
+        return ""
+    return " ".join(keyword.strip().split()).lower()
 
 # ============= VERSION RESOLVERS =============
 
@@ -150,6 +154,22 @@ def _product_spec_version(slug_or_id: str, *_args, **_kwargs) -> str:
 def _product_suggest_version(*_args, **_kwargs) -> str:
     return _get_version("product", "suggest")
 
+def _product_search_version(keyword: str, *args, **kwargs) -> str:
+    norm_kw = _normalize_search_keyword(keyword)
+    page = _extract_page_argument(args, kwargs, index=1)
+    tokens = [
+        _get_version("product", "search"),
+        _get_version("product", "segment:core"),
+        _get_version("product", "segment:media"),
+        _get_version("product", "segment:specs"),
+    ]
+    if page:
+        tokens.append(_get_version("product", f"page:{page}"))
+    if norm_kw:
+        tokens.append(_get_version("product", f"search:q:{norm_kw}"))
+        if page:
+            tokens.append(_get_version("product", f"search:q:{norm_kw}:page:{page}"))
+    return _compose_token(*tokens)
 
 # ============= COLLECTION HELPERS =============
 
@@ -252,6 +272,7 @@ def _invalidate_product_cache(
                     _bump_version("product", f"sub:{sid}:page:{page_num}")
 
     _bump_version("product", "suggest")
+    _bump_version("product", "search")
 
     if category_ids:
         for cid in category_ids:

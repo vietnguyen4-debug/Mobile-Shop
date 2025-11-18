@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 *.db
+*.http
+CON
 
 #Virtual env
 .venv/

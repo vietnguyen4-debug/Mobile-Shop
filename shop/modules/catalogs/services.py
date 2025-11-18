@@ -9,7 +9,8 @@ from .service_helpers import _invalidate_category_cache, _versioned_make_name, _
     _validate_category_subcategory_relation, _build_media, _build_specs,  \
     _product_list_version, _product_item_version, _product_list_by_sub_version, \
     _product_media_version, _normalize_media_embedded, _normalize_specs_embedded, _product_spec_version, \
-    _invalidate_keyword_cache, _product_suggest_version, _invalidate_product_with_ids, _validate_product_instance
+    _invalidate_keyword_cache, _product_suggest_version, _invalidate_product_with_ids, _validate_product_instance, \
+    _product_search_version, _normalize_search_keyword
 from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
@@ -383,6 +384,27 @@ def s_product_list(page, limit) -> dict:
         return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
     except Exception as e:
         raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
+
+@cache.memoize(
+    timeout=DEFAULT_CACHE_TIMEOUT,
+    make_name=_versioned_make_name(_product_search_version),
+)
+def s_product_search(keyword, page, limit) -> dict:
+    try:
+        p, l = parse_pagination(page, limit)
+    except (ValueError, TypeError) as e:
+        raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
+
+    normalized_keyword = _normalize_search_keyword(keyword)
+    if not normalized_keyword:
+        return {"items": [], "total": 0, "page": p, "limit": l}
+
+    try:
+        items, total = prod_search_by_name(normalized_keyword, p, l, active_only=True)
+        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+    except Exception as e:
+        raise AppError(f"Failed to search products: {str(e)}", 500, name="DATABASE_ERROR")
+
 
 
 @cache.memoize(
