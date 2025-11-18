@@ -158,6 +158,41 @@ def s_get_checkout(
         )
 
 
+def s_cancel_checkout(
+    checkout_id: str, user_id: Optional[str], payload: Optional[dict]
+) -> Dict[str, Any]:
+    payload = payload or {}
+    try:
+        checkout = _load_checkout(checkout_id)
+        user = load_user(user_id)
+        session_id = sanitize_session_id(payload.get("session_id"))
+        ensure_checkout_access(checkout, user, session_id)
+
+        status = getattr(checkout, "status", None) or "pending"
+        if status == "completed":
+            raise AppError(
+                "Cannot cancel a completed checkout", 400, name="CHECKOUT_COMPLETED"
+            )
+        if status == "cancelled":
+            return _build_snapshot(checkout)
+
+        shipment_doc, _ = _collect_related_documents(checkout)
+        _update_shipment_status(shipment_doc, status="cancelled")
+
+        checkout.status = "cancelled"
+        checkout.user = user or checkout.user
+        if session_id:
+            checkout.session_id = session_id
+        checkout = checkout_save(checkout)
+        return _build_snapshot(checkout)
+    except AppError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        raise AppError(
+            f"Failed to cancel checkout: {str(exc)}", 500, name="DATABASE_ERROR"
+        )
+
+
 def s_complete_checkout(
     checkout_id: str, user_id: Optional[str], payload: Optional[dict]
 ) -> Dict[str, Any]:

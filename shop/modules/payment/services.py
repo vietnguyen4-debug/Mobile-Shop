@@ -4,6 +4,7 @@ from ...core.validation import require_fields
 from .repositories import *
 from .mappers import payment_public
 from ...core.utils import *
+from ..checkout.repositories import checkout_save
 
 def s_create_offline_payment(user_id: str | None, payload: dict) -> dict:
     require_fields(payload, "checkout_id", "amount")
@@ -30,6 +31,13 @@ def s_create_offline_payment(user_id: str | None, payload: dict) -> dict:
                 "note": cleaned_note,
             }
         )
+        # Mark checkout as processing once a payment attempt is created.
+        if getattr(checkout, "status", None) not in ("completed", "cancelled"):
+            checkout.status = "processing"
+            if session_id:
+                checkout.session_id = session_id
+            checkout = checkout_save(checkout)
+
         return payment_public(payment)
     except AppError:
         raise
