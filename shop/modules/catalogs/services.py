@@ -75,7 +75,7 @@ def s_category_get(slug_or_id: str) -> dict:
 )
 def s_category_list() -> dict:
     try:
-        return {"items": [cat_public(c) for c in cat_list_all()]}
+        return {"items": [cat_summary(c) for c in cat_list_all()]}
     except Exception as e:
         raise AppError(f"Failed to list categories: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -197,7 +197,7 @@ def s_subcategory_list_by_category(category_id: str) -> dict:
     cat_oid = _safe_parse_oid(category_id, "Category")
 
     try:
-        return {"items": [sub_public(s) for s in sub_list_by_category(cat_oid)]}
+        return {"items": [sub_summary(s) for s in sub_list_by_category(cat_oid)]}
     except Exception as e:
         raise AppError(f"Failed to list subcategories: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -382,7 +382,7 @@ def s_product_list(page, limit) -> dict:
 
     try:
         items, total = prod_list_all(p, l)
-        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+        return {"items": [product_summary(x) for x in items], "total": total, "page": p, "limit": l}
     except Exception as e:
         raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -402,7 +402,7 @@ def s_product_search(keyword, page, limit) -> dict:
 
     try:
         items, total = prod_search_by_name(normalized_keyword, p, l, active_only=True)
-        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+        return {"items": [product_summary(x) for x in items], "total": total, "page": p, "limit": l}
     except Exception as e:
         raise AppError(f"Failed to search products: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -428,7 +428,7 @@ def s_product_list_by_sub(sub_id, page, limit, *, active_only=True) -> dict:
 
     try:
         items, total = prod_list_by_sub(sub_oid, p, l, active_only=active_only)
-        return {"items": [product_public(x) for x in items], "total": total, "page": p, "limit": l}
+        return {"items": [product_summary(x) for x in items], "total": total, "page": p, "limit": l}
     except Exception as e:
         raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
 
