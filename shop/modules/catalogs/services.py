@@ -1,6 +1,6 @@
 from bson.errors import InvalidId
 from mongoengine import ValidationError as MongoValidationError
-
+import datetime
 from .mappers import _media_public, _spec_public
 from .service_helpers import *
 from .service_helpers import _invalidate_category_cache, _versioned_make_name, _category_item_version, \
@@ -361,9 +361,13 @@ def s_product_create(payload: dict) -> dict:
     make_name=_versioned_make_name(_product_item_version),
 )
 def s_product_get(slug_or_id: str) -> dict:
+    print("start", datetime.now())
     try:
         p = find_by_slug_or_id("product", slug_or_id)
-        return product_public(p)
+        _p = product_public(p)
+        print("end", datetime.now())
+        return _p
+    
     except AppError:
         raise
     except Exception as e:
