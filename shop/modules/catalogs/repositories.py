@@ -70,6 +70,10 @@ def prod_search_by_name(keyword: str, page: int, limit: int, *, active_only=True
     if not kw:
         return [], 0
 
+    # Clamp pagination to keep queries predictable and avoid huge skips/limits.
+    page = max(int(page or 1), 1)
+    limit = max(1, min(int(limit or 20), 100))
+
     qs = Product.objects(name__icontains=kw)
     if active_only:
         qs = qs.filter(is_active=True, is_orphan=False)

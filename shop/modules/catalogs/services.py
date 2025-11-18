@@ -339,14 +339,15 @@ def s_product_create(payload: dict) -> dict:
         })
         result = product_public(p)
 
-        # Only invalidate page 1 - new products appear at the top
+        # Invalidate first pages (per PRODUCT_PAGE_INVALIDATION_DEPTH) since new items shift pagination
         _invalidate_product_with_ids(
             result.get("slug"),
             p,
             ["core", "media", "specs"],
             result.get("id"),
-            affected_pages=[1],
-            invalidate_all_pages=False,
+            # Invalidate first pages using configured depth to reduce stale pagination
+            affected_pages=None,
+            invalidate_all_pages=True,
         )
         return result
     except MongoValidationError as e:
@@ -520,6 +521,9 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
             result.get("id"),
             additional_cat_ids=[original_cat_id] if original_cat_id else None,
             additional_sub_ids=[original_sub_id] if original_sub_id else None,
+            # Keep list caches intact; only invalidate item-level and specified segments
+            affected_pages=[],
+            invalidate_all_pages=False,
         )
         return result
     except MongoValidationError as e:
