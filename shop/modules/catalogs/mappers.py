@@ -119,20 +119,31 @@ def sub_summary(s):
 
 @mapping_guard("product_summary")
 def product_summary(p):
-    media_sorted = sorted(
-        p.media or [],
-        key=lambda m: (not bool(getattr(m, "is_primary", False)), getattr(m, "order", 0) or 0),
-    )
-    primary = _media_public(media_sorted[0]) if media_sorted else None
+    primary_media = None
+    best_score = None
+    for m in p.media or []:
+        score = (
+            0 if bool(getattr(m, "is_primary", False)) else 1,
+            getattr(m, "order", 0) or 0,
+        )
+        if primary_media is None or score < best_score:
+            primary_media = m
+            best_score = score
+
+    primary = None
+    if primary_media:
+        primary = {
+            "id": primary_media.id,
+            "kind": primary_media.kind,
+            "url": primary_media.url,
+            "alt": primary_media.alt,
+        }
 
     return {
         "id": str(p.id),
         "name": p.name,
         "slug": p.slug,
         "base_price": p.price,
-        "category_id": str(p.category.id) if p.category else None,
-        "subcategory_id": str(p.subcategory.id) if p.subcategory else None,
         "primary_media": primary,
-        "is_active": p.is_active,
     }
 

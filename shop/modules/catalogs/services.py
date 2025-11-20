@@ -1,6 +1,8 @@
 from bson.errors import InvalidId
 from mongoengine import ValidationError as MongoValidationError
 import datetime
+import time
+from flask import current_app
 from .mappers import _media_public, _spec_public
 from .service_helpers import *
 from .service_helpers import _invalidate_category_cache, _versioned_make_name, _category_item_version, \
@@ -379,16 +381,47 @@ def s_product_get(slug_or_id: str) -> dict:
     make_name=_versioned_make_name(_product_list_version),
 )
 def s_product_list(page, limit) -> dict:
-    try:
-        p, l = parse_pagination(page, limit)
-    except (ValueError, TypeError) as e:
-        raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
+    with timing(
+        "s_product_list_timing",
+        logger=getattr(current_app, "logger", None),
+        meta={"page": page, "limit": limit},
+    ) as tracker:
+        try:
+            p, l = parse_pagination(page, limit)
+        except (ValueError, TypeError) as e:
+            raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
 
-    try:
-        items, total = prod_list_all(p, l)
-        return {"items": [product_summary(x) for x in items], "total": total, "page": p, "limit": l}
-    except Exception as e:
-        raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
+        tracker.add_meta(page=p, limit=l)
+        tracker.mark("parsed_pagination")
+
+        try:
+            items, total, db_timings = prod_list_all(p, l)
+        except Exception as e:
+            raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
+
+        tracker.add_meta(fetched=len(items), total=total)
+        if db_timings:
+            tracker.add_meta(
+                db_count_ms=db_timings.get("count_ms"),
+                db_fetch_ms=db_timings.get("fetch_ms"),
+            )
+        tracker.mark("db_query")
+
+        summary_timings: list[float] = []
+        result_items = []
+        for x in items:
+            t0 = time.perf_counter()
+            result_items.append(product_summary(x))
+            summary_timings.append(time.perf_counter() - t0)
+        if summary_timings:
+            tracker.add_meta(
+                summary_total_ms=round(sum(summary_timings) * 1000, 2),
+                summary_max_ms=round(max(summary_timings) * 1000, 2),
+                summary_avg_ms=round((sum(summary_timings) / len(summary_timings)) * 1000, 2),
+            )
+        tracker.mark("build_response")
+
+        return {"items": result_items, "total": total, "page": p, "limit": l}
 
 @cache.memoize(
     timeout=DEFAULT_CACHE_TIMEOUT,

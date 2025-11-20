@@ -1,7 +1,8 @@
-from flask import request
+from flask import request, current_app
 from flask_jwt_extended import jwt_required
 from ...core.responses import ok, created, no_content
 from ...core.rbac import *
+from ...core.utils import timing
 from . import bp, bp_admin
 from .services import *
 
@@ -26,7 +27,16 @@ def r_sub_get(slug_or_id):
 def r_product_list():
     page = request.args.get("page", 1)
     limit = request.args.get("limit", 20)
-    return ok(s_product_list(page, limit), "Products listed successfully.")
+    with timing(
+        "route_product_list",
+        logger=getattr(current_app, "logger", None),
+        meta={"page": page, "limit": limit, "path": "/api/products"},
+    ) as tracker:
+        result = s_product_list(page, limit)
+        tracker.mark("service_call")
+        response = ok(result, "Products listed successfully.")
+        tracker.mark("response_build")
+        return response
 
 @bp.get("/products/by-sub/<sub_id>")
 def r_products_by_sub(sub_id):

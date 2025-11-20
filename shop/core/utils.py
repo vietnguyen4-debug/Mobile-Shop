@@ -1,4 +1,7 @@
+import logging
+import time
 import re, unicodedata
+from contextlib import contextmanager
 from typing import Tuple, Any, Optional
 from bson import ObjectId
 
@@ -158,4 +161,82 @@ def normalize_required_string(
     if len(cleaned) > max_length:
         raise AppError(f"{field} is too long", 400, name=code)
     return cleaned
+
+
+_default_timing_logger = logging.getLogger("shop.timing")
+if not _default_timing_logger.handlers:
+    _default_timing_logger.addHandler(logging.NullHandler())
+
+
+def _resolve_logger(logger=None):
+    if logger is not None:
+        return logger
+    return _default_timing_logger
+
+
+class TimingTracker:
+    def __init__(self, event: str, *, logger=None, meta: Optional[dict] = None) -> None:
+        self.event = event
+        self.logger = _resolve_logger(logger)
+        self.meta = dict(meta or {})
+        self.start = time.perf_counter()
+        self._checkpoints: list[tuple[str, float]] = []
+        self._finished = False
+        self.status = "ok"
+        self.error: Optional[Exception] = None
+        self._end_time = self.start
+
+    def mark(self, stage: str) -> None:
+        self._checkpoints.append((stage, time.perf_counter()))
+
+    def add_meta(self, **values) -> None:
+        for key, value in values.items():
+            if value is not None:
+                self.meta[key] = value
+
+    def finish(self, *, status: Optional[str] = None, error: Optional[Exception] = None) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        if status:
+            self.status = status
+        if error:
+            self.error = error
+        self._end_time = time.perf_counter()
+        self._emit()
+
+    def _emit(self) -> None:
+        logger = self.logger
+        if not logger:
+            return
+
+        durations = {}
+        last = self.start
+        for name, ts in self._checkpoints:
+            durations[name] = round((ts - last) * 1000, 2)
+            last = ts
+
+        total_ms = round((self._end_time - self.start) * 1000, 2)
+        payload = {
+            "event": self.event,
+            **self.meta,
+            "durations_ms": durations,
+            "total_ms": total_ms,
+            "status": self.status,
+        }
+        if self.error:
+            payload["error"] = str(self.error)
+
+        logger.info(payload)
+
+
+@contextmanager
+def timing(event: str, *, logger=None, meta: Optional[dict] = None):
+    tracker = TimingTracker(event, logger=logger, meta=meta)
+    try:
+        yield tracker
+        tracker.finish(status="ok")
+    except Exception as exc:
+        tracker.finish(status="error", error=exc)
+        raise
 

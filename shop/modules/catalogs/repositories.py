@@ -1,7 +1,8 @@
 from typing import Optional, Tuple, Iterable
+import time
 from bson import ObjectId
 from .models import Category, SubCategory, Product, ProductKeyword, Media, Spec
-from ...core.utils import parse_oid
+from ...core.utils import parse_oid, TimingTracker
 MAX_MEDIA = 20
 MAX_SPECS = 80
 
@@ -52,11 +53,30 @@ def prod_get_by_id(oid: ObjectId) -> Optional[Product]:
 def prod_get_by_slug(slug: str) -> Optional[Product]:
     return Product.objects(slug=slug).first()
 
-def prod_list_all(page: int, limit: int) -> Tuple[list[Product], int]:
+def prod_list_all(page: int, limit: int) -> Tuple[list[Product], int, dict]:
+    tracker = TimingTracker("prod_list_all_query", meta={"page": page, "limit": limit})
     qs = Product.objects
-    total = qs.count()
-    items = list(qs.order_by("-created_at").skip((page-1)*limit).limit(limit))
-    return items, total
+
+    try:
+        t0 = time.perf_counter()
+        total = qs.count()
+        t1 = time.perf_counter()
+        tracker.mark("count")
+
+        items = list(qs.order_by("-created_at").skip((page-1)*limit).limit(limit))
+        t2 = time.perf_counter()
+        tracker.mark("fetch")
+
+        timings = {
+            "count_ms": round((t1 - t0) * 1000, 2),
+            "fetch_ms": round((t2 - t1) * 1000, 2),
+        }
+        tracker.add_meta(total=total, fetched=len(items), **timings)
+        tracker.finish()
+        return items, total, timings
+    except Exception as exc:
+        tracker.finish(status="error", error=exc)
+        raise
 
 def prod_list_by_sub(sub_oid: ObjectId, page: int, limit: int, *, active_only=True) -> Tuple[list[Product], int]:
     qs = Product.objects(subcategory=sub_oid)
