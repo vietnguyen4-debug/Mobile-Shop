@@ -25,24 +25,40 @@ def r_sub_get(slug_or_id):
 
 @bp.get("/products")
 def r_product_list():
-    page = request.args.get("page", 1)
-    limit = request.args.get("limit", 20)
+    try:
+        page = int(request.args.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        limit = int(request.args.get("limit", 20))
+    except (TypeError, ValueError):
+        limit = 20
+    category_slug = request.args.get("category_slug")
+    subcategory_slug = request.args.get("subcategory_slug")
+    sort = (request.args.get("sort") or "created_at").strip().lower() or "created_at"
     with timing(
         "route_product_list",
         logger=getattr(current_app, "logger", None),
-        meta={"page": page, "limit": limit, "path": "/api/products"},
+        meta={
+            "page": page,
+            "limit": limit,
+            "path": "/api/products",
+            "category_slug": category_slug,
+            "subcategory_slug": subcategory_slug,
+            "sort": sort,
+        },
     ) as tracker:
-        result = s_product_list(page, limit)
+        result = s_product_list(
+            page,
+            limit,
+            category_slug=category_slug,
+            subcategory_slug=subcategory_slug,
+            sort=sort,
+        )
         tracker.mark("service_call")
         response = ok(result, "Products listed successfully.")
         tracker.mark("response_build")
         return response
-
-@bp.get("/products/by-sub/<sub_id>")
-def r_products_by_sub(sub_id):
-    page = request.args.get("page", 1)
-    limit = request.args.get("limit", 20)
-    return ok(s_product_list_by_sub(sub_id, page, limit, active_only=True), "Products listed successfully.")
 
 @bp.get("/products/<slug_or_id>")
 def r_product_get(slug_or_id):

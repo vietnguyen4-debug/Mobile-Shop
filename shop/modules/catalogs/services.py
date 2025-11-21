@@ -5,14 +5,14 @@ import time
 from flask import current_app
 from .mappers import _media_public, _spec_public
 from .service_helpers import *
-from .service_helpers import _invalidate_category_cache, _versioned_make_name, _category_item_version, \
+from .service_helpers import _invalidate_category_cache, versioned_memoize, _category_item_version, \
     _category_list_version, _invalidate_product_cache, _safe_get_category_by_id, _invalidate_subcategory_cache, \
     _subcategory_item_version, _subcategory_by_category_version, _safe_parse_oid, _parse_and_get_subcategory, \
     _validate_category_subcategory_relation, _build_media, _build_specs,  \
-    _product_list_version, _product_item_version, _product_list_by_sub_version, \
+    _product_list_version, _product_item_version, \
     _product_media_version, _normalize_media_embedded, _normalize_specs_embedded, _product_spec_version, \
     _invalidate_keyword_cache, _product_suggest_version, _invalidate_product_with_ids, _validate_product_instance, \
-    _product_search_version, _normalize_search_keyword
+    _product_search_version, _normalize_search_keyword, rebuild_product_ranks, PRODUCT_SORT_KEYS
 from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
@@ -57,10 +57,7 @@ def s_category_create(payload: dict) -> dict:
         raise AppError(f"Failed to create category: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_category_item_version),
-)
+@versioned_memoize(_category_item_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_category_get(slug_or_id: str) -> dict:
     try:
         c = find_by_slug_or_id("category", slug_or_id)
@@ -71,10 +68,7 @@ def s_category_get(slug_or_id: str) -> dict:
         raise AppError(f"Failed to retrieve category: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_category_list_version),
-)
+@versioned_memoize(_category_list_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_category_list() -> dict:
     try:
         return {"items": [cat_summary(c) for c in cat_list_all()]}
@@ -135,6 +129,7 @@ def s_category_delete(slug_or_id: str) -> None:
         _invalidate_category_cache(slug_or_id, slug, cid)
         _invalidate_product_cache(
             category_ids=[cid] if cid else None,
+            category_slugs=[slug] if slug else None,
             segments=["core"],
         )
     except AppError:
@@ -177,10 +172,7 @@ def s_subcategory_create(payload: dict) -> dict:
         raise AppError(f"Failed to create subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_subcategory_item_version),
-)
+@versioned_memoize(_subcategory_item_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_subcategory_get(slug_or_id: str) -> dict:
     try:
         s = find_by_slug_or_id("subcategory", slug_or_id)
@@ -191,10 +183,7 @@ def s_subcategory_get(slug_or_id: str) -> dict:
         raise AppError(f"Failed to retrieve subcategory: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_subcategory_by_category_version),
-)
+@versioned_memoize(_subcategory_by_category_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_subcategory_list_by_category(category_id: str) -> dict:
     cat_oid = _safe_parse_oid(category_id, "Category")
 
@@ -266,10 +255,13 @@ def s_subcategory_delete(slug_or_id: str) -> None:
         s = find_by_slug_or_id("subcategory", slug_or_id)
         slug = getattr(s, "slug", None)
         sid = str(getattr(s, "id", ""))
-        cat_id = str(getattr(getattr(s, "category", None), "id", "")) if getattr(s, "category", None) else None
+        category_obj = getattr(s, "category", None)
+        cat_id = str(getattr(category_obj, "id", "")) if category_obj else None
+        cat_slug = getattr(category_obj, "slug", None) if category_obj else None
         mark_products_orphan_by_subcategory(s.id)
         sub_delete(s)
         category_ids = [cid for cid in [cat_id] if cid] or None
+        category_slugs = [cslug for cslug in [cat_slug] if cslug] or None
         _invalidate_subcategory_cache(
             slug_or_id,
             slug,
@@ -279,6 +271,8 @@ def s_subcategory_delete(slug_or_id: str) -> None:
         _invalidate_product_cache(
             subcategory_ids=[sid] if sid else None,
             category_ids=category_ids,
+            subcategory_slugs=[slug] if slug else None,
+            category_slugs=category_slugs,
             segments=["core"],
         )
     except AppError:
@@ -339,6 +333,8 @@ def s_product_create(payload: dict) -> dict:
             "is_orphan": payload.get("is_orphan", False),
             "orphan_reason": payload.get("orphan_reason", None),
         })
+        rebuild_product_ranks()
+        p.reload()
         result = product_public(p)
 
         # Invalidate first pages (per PRODUCT_PAGE_INVALIDATION_DEPTH) since new items shift pagination
@@ -358,10 +354,7 @@ def s_product_create(payload: dict) -> dict:
         raise AppError(f"Failed to create product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_item_version),
-)
+@versioned_memoize(_product_item_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_product_get(slug_or_id: str) -> dict:
     print("start", datetime.now())
     try:
@@ -376,26 +369,57 @@ def s_product_get(slug_or_id: str) -> dict:
         raise AppError(f"Failed to retrieve product: {str(e)}", 500, name="DATABASE_ERROR")
 
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_list_version),
-)
-def s_product_list(page, limit) -> dict:
+@versioned_memoize(_product_list_version, timeout=DEFAULT_CACHE_TIMEOUT)
+def s_product_list(page, limit, category_slug=None, subcategory_slug=None, sort="created_at") -> dict:
     with timing(
         "s_product_list_timing",
         logger=getattr(current_app, "logger", None),
-        meta={"page": page, "limit": limit},
+        meta={
+            "page": page,
+            "limit": limit,
+            "category_slug": category_slug,
+            "subcategory_slug": subcategory_slug,
+            "sort": sort,
+        },
     ) as tracker:
         try:
             p, l = parse_pagination(page, limit)
         except (ValueError, TypeError) as e:
             raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
 
-        tracker.add_meta(page=p, limit=l)
+        sort_key = (sort or "created_at").strip().lower() or "created_at"
+        if sort_key not in PRODUCT_SORT_KEYS:
+            raise AppError("Invalid sort option", 400, name="INVALID_SORT")
+
+        tracker.add_meta(page=p, limit=l, sort=sort_key)
         tracker.mark("parsed_pagination")
 
+        cat_slug = (category_slug or "").strip() or None
+        sub_slug = (subcategory_slug or "").strip() or None
+        category = None
+        subcategory = None
+
+        if cat_slug:
+            category = cat_get_by_slug(cat_slug)
+            if not category:
+                raise AppError("Category not found", 404, name="INVALID_CATEGORY")
+        if sub_slug:
+            subcategory = sub_get_by_slug(sub_slug)
+            if not subcategory:
+                raise AppError("Subcategory not found", 404, name="INVALID_SUBCATEGORY")
+            if not category:
+                category = getattr(subcategory, "category", None)
+
+        _validate_category_subcategory_relation(category, subcategory)
+
         try:
-            items, total, db_timings = prod_list_all(p, l)
+            items, total, db_timings = prod_list_all(
+                p,
+                l,
+                category=category,
+                subcategory=subcategory,
+                sort_by=sort_key,
+            )
         except Exception as e:
             raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
 
@@ -423,10 +447,7 @@ def s_product_list(page, limit) -> dict:
 
         return {"items": result_items, "total": total, "page": p, "limit": l}
 
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_search_version),
-)
+@versioned_memoize(_product_search_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_product_search(keyword, page, limit) -> dict:
     try:
         p, l = parse_pagination(page, limit)
@@ -443,31 +464,6 @@ def s_product_search(keyword, page, limit) -> dict:
     except Exception as e:
         raise AppError(f"Failed to search products: {str(e)}", 500, name="DATABASE_ERROR")
 
-
-
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_list_by_sub_version),
-)
-def s_product_list_by_sub(sub_id, page, limit, *, active_only=True) -> dict:
-    try:
-        p, l = parse_pagination(page, limit)
-    except (ValueError, TypeError) as e:
-        raise AppError(f"Invalid pagination parameters: {str(e)}", 400, name="INVALID_PAGINATION")
-
-    try:
-        sub_oid = parse_oid(sub_id)
-    except (InvalidId, Exception):
-        return {"items": [], "total": 0, "page": p, "limit": l}
-
-    if not sub_oid:
-        return {"items": [], "total": 0, "page": p, "limit": l}
-
-    try:
-        items, total = prod_list_by_sub(sub_oid, p, l, active_only=active_only)
-        return {"items": [product_summary(x) for x in items], "total": total, "page": p, "limit": l}
-    except Exception as e:
-        raise AppError(f"Failed to retrieve products: {str(e)}", 500, name="DATABASE_ERROR")
 
 
 def s_product_update(slug_or_id: str, payload: dict) -> dict:
@@ -547,6 +543,8 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
 
     try:
         p = prod_update(p, data)
+        rebuild_product_ranks()
+        p.reload()
         result = product_public(p)
         _invalidate_product_with_ids(
             slug_or_id,
@@ -558,8 +556,6 @@ def s_product_update(slug_or_id: str, payload: dict) -> dict:
             result.get("id"),
             additional_cat_ids=[original_cat_id] if original_cat_id else None,
             additional_sub_ids=[original_sub_id] if original_sub_id else None,
-            # Keep list caches intact; only invalidate item-level and specified segments
-            affected_pages=[],
             invalidate_all_pages=False,
         )
         return result
@@ -576,6 +572,7 @@ def s_product_delete(slug_or_id: str) -> None:
         pid = str(getattr(p, "id", ""))
 
         prod_delete(p)
+        rebuild_product_ranks()
 
         # Delete affects all pages (items shift)
         _invalidate_product_with_ids(
@@ -593,10 +590,7 @@ def s_product_delete(slug_or_id: str) -> None:
 
 
 # ------MEDIA-------
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_media_version),
-)
+@versioned_memoize(_product_media_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_media_list(slug_or_id: str) -> dict:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
@@ -701,10 +695,7 @@ def s_media_set_primary(slug_or_id: str, media_id: str) -> dict:
 
 
 # ------SPECS--------
-@cache.memoize(
-    timeout=DEFAULT_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_spec_version),
-)
+@versioned_memoize(_product_spec_version, timeout=DEFAULT_CACHE_TIMEOUT)
 def s_specs_list(slug_or_id: str) -> dict:
     try:
         p = find_by_slug_or_id("product", slug_or_id)
@@ -843,10 +834,7 @@ def s_keyword_delete(slug_or_id: str, keyword_or_id: str) -> None:
     _invalidate_keyword_cache()
 
 
-@cache.memoize(
-    timeout=SUGGEST_CACHE_TIMEOUT,
-    make_name=_versioned_make_name(_product_suggest_version),
-)
+@versioned_memoize(_product_suggest_version, timeout=SUGGEST_CACHE_TIMEOUT)
 def s_keyword_suggest(keyword: str, limit: int = 20) -> dict:
     try:
         limit = int(limit)

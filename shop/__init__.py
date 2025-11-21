@@ -54,5 +54,76 @@ def create_app(config_object=config.DevConfig):
     @app.get("/")
     def root():
         return health()
+
+    _warmup_backends(app)
     return app
+
+
+def _warmup_backends(app: Flask) -> None:
+    """
+    Establish initial connections to MongoDB/Redis so the first HTTP request
+    doesn't pay the TLS handshake/init penalty.
+    """
+    if not app.config.get("ENABLE_STARTUP_WARMUP", True):
+        return
+
+    try:
+        with app.app_context():
+            _warmup_mongo_models()
+            _warmup_redis()
+    except Exception as exc:
+        logger = getattr(app, "logger", None)
+        if logger:
+            logger.warning("Startup warm-up skipped: %s", exc)
+
+
+def _warmup_mongo_models() -> None:
+    try:
+        from .modules.catalogs.models import (
+            Category,
+            SubCategory,
+            Product,
+            ProductKeyword,
+        )
+        from .modules.users.models import User
+        from .modules.cart.models import Cart
+        from .modules.checkout.models import Checkout
+        from .modules.shipment.models import Shipment, ShipmentAddress
+        from .modules.payment.models import Payment
+        from .modules.auth.models_recovery import PasswordReset, EmailVerification
+        from .modules.auth.models_session import DeviceSession
+
+        models = [
+            Category,
+            SubCategory,
+            Product,
+            ProductKeyword,
+            User,
+            Cart,
+            Checkout,
+            Shipment,
+            ShipmentAddress,
+            Payment,
+            PasswordReset,
+            EmailVerification,
+            DeviceSession,
+            TokenBlocklist,
+        ]
+        for model in models:
+            try:
+                model.objects.first()
+            except Exception:
+                continue
+
+        from .modules.catalogs.service_helpers import ensure_product_ranks_initialized
+
+        ensure_product_ranks_initialized()
+    except Exception:
+        raise
+
+
+def _warmup_redis() -> None:
+    redis_client = getattr(cache, "client", None)
+    if redis_client:
+        redis_client.ping()
 

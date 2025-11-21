@@ -1,5 +1,7 @@
+import math
 import os
-from typing import Optional, Literal, Tuple, List
+from functools import wraps
+from typing import Optional, Literal, Tuple, List, Sequence, Dict
 from bson import ObjectId
 
 from .repositories import cat_get_by_id, sub_get_by_id
@@ -24,16 +26,36 @@ def _version_key(bucket: str, *parts: Optional[str]) -> str:
 
 
 def _get_version(bucket: str, *parts: Optional[str]) -> str:
-    client = _cache_client()
-    if not client:
-        return "0"
+    return _get_versions((bucket, *parts))[0]
 
-    key = _version_key(bucket, *parts)
-    version = client.get(key)
-    if version is None:
-        version = "0"
-        client.set(key, version)
-    return version
+
+def _get_versions(*entries: Sequence[Optional[str]]) -> List[str]:
+    client = _cache_client()
+    if not client or not entries:
+        return ["0"] * len(entries)
+
+    keys: List[str] = []
+    for entry in entries:
+        if not entry or entry[0] is None:
+            raise ValueError("Version resolver entries must include a bucket name.")
+        bucket = entry[0]
+        parts = tuple(part for part in entry[1:] if part is not None)
+        keys.append(_version_key(bucket, *parts))
+
+    values = client.mget(keys)
+    result: List[str] = []
+    missing = {}
+    for key, value in zip(keys, values):
+        if value is None:
+            result.append("0")
+            missing[key] = "0"
+        else:
+            result.append(value)
+
+    if missing:
+        client.mset(missing)
+
+    return result
 
 
 def _bump_version(bucket: str, *parts: Optional[str]) -> None:
@@ -45,20 +67,30 @@ def _bump_version(bucket: str, *parts: Optional[str]) -> None:
     client.incr(key)
 
 
-def _versioned_make_name(version_resolver):
-    def factory(fname):
-        def _inner(*args, **kwargs):
+def versioned_memoize(version_resolver, **memoize_kwargs):
+    """Wrap flask-caching memoize to include per-call version tokens."""
+
+    def decorator(fn):
+        @cache.memoize(**memoize_kwargs)
+        def _cached(*args, **kwargs):
+            kwargs.pop("_ver", None)
+            return fn(*args, **kwargs)
+
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
             token = version_resolver(*args, **kwargs)
             if token:
                 mutable_kwargs = dict(kwargs)
                 mutable_kwargs["_ver"] = token
             else:
                 mutable_kwargs = kwargs
-            return cache._memoize_make_cache_key(fname, *args, **mutable_kwargs)
+            return _cached(*args, **mutable_kwargs)
 
-        return _inner
+        wrapper.cache_timeout = getattr(_cached, "cache_timeout", None)
+        wrapper.delete_memoized = getattr(_cached, "delete_memoized", None)
+        return wrapper
 
-    return factory
+    return decorator
 
 def _extract_page_argument(args, kwargs, *, index: int = 0, key: str = "page") -> Optional[str]:
     """Resolve the page argument from positional/keyword inputs."""
@@ -100,55 +132,60 @@ def _subcategory_item_version(slug_or_id: str, *_args, **_kwargs) -> str:
 
 
 def _subcategory_by_category_version(category_id: str, *_args, **_kwargs) -> str:
-    return _compose_token(
-        _get_version("subcategory", "list"),
-        _get_version("subcategory", f"list:{category_id}"),
+    tokens = _get_versions(
+        ("subcategory", "list"),
+        ("subcategory", f"list:{category_id}"),
     )
+    return _compose_token(*tokens)
 
 
 def _product_item_version(slug_or_id: str, *_args, **_kwargs) -> str:
-    return _compose_token(
-        _get_version("product", slug_or_id),
-        _get_version("product", "segment:core"),
-        _get_version("product", "segment:media"),
-        _get_version("product", "segment:specs"),
+    tokens = _get_versions(
+        ("product", slug_or_id),
+        ("product", "segment:core"),
+        ("product", "segment:media"),
+        ("product", "segment:specs"),
     )
+    return _compose_token(*tokens)
 
 
 def _product_list_version(*args, **kwargs) -> str:
     page = _extract_page_argument(args, kwargs)
-    tokens = [_get_version("product", "list")]
+    category_slug = kwargs.get("category_slug")
+    subcategory_slug = kwargs.get("subcategory_slug")
+    sort_key = (kwargs.get("sort") or kwargs.get("sort_by") or "created_at") or "created_at"
+    if sort_key:
+        sort_key = str(sort_key).strip().lower() or "created_at"
+    else:
+        sort_key = "created_at"
+    entries = [("product", "list")]
     if page:
-        tokens.append(_get_version("product", f"page:{page}"))
-    return _compose_token(*tokens)
-
-
-def _product_list_by_sub_version(sub_id: str, *args, **kwargs) -> str:
-    page = _extract_page_argument(args, kwargs)
-    tokens = [
-        _get_version("product", "list"),
-        _get_version("product", f"sub:{sub_id}"),
-    ]
-    if page:
-        tokens.append(_get_version("product", f"page:{page}"))
-        tokens.append(_get_version("product", f"sub:{sub_id}:page:{page}"))
+        entries.append(("product", f"page:{page}"))
+    if category_slug:
+        entries.append(("product", f"cat_slug:{category_slug}"))
+    if subcategory_slug:
+        entries.append(("product", f"sub_slug:{subcategory_slug}"))
+    entries.append(("product", f"sort:{sort_key}"))
+    tokens = _get_versions(*entries)
     return _compose_token(*tokens)
 
 
 def _product_media_version(slug_or_id: str, *_args, **_kwargs) -> str:
-    return _compose_token(
-        _get_version("product", slug_or_id),
-        _get_version("product", "segment:media"),
-        _get_version("product", f"media:{slug_or_id}"),
+    tokens = _get_versions(
+        ("product", slug_or_id),
+        ("product", "segment:media"),
+        ("product", f"media:{slug_or_id}"),
     )
+    return _compose_token(*tokens)
 
 
 def _product_spec_version(slug_or_id: str, *_args, **_kwargs) -> str:
-    return _compose_token(
-        _get_version("product", slug_or_id),
-        _get_version("product", "segment:specs"),
-        _get_version("product", f"spec:{slug_or_id}"),
+    tokens = _get_versions(
+        ("product", slug_or_id),
+        ("product", "segment:specs"),
+        ("product", f"spec:{slug_or_id}"),
     )
+    return _compose_token(*tokens)
 
 
 def _product_suggest_version(*_args, **_kwargs) -> str:
@@ -157,18 +194,19 @@ def _product_suggest_version(*_args, **_kwargs) -> str:
 def _product_search_version(keyword: str, *args, **kwargs) -> str:
     norm_kw = _normalize_search_keyword(keyword)
     page = _extract_page_argument(args, kwargs, index=1)
-    tokens = [
-        _get_version("product", "search"),
-        _get_version("product", "segment:core"),
-        _get_version("product", "segment:media"),
-        _get_version("product", "segment:specs"),
+    entries = [
+        ("product", "search"),
+        ("product", "segment:core"),
+        ("product", "segment:media"),
+        ("product", "segment:specs"),
     ]
     if page:
-        tokens.append(_get_version("product", f"page:{page}"))
+        entries.append(("product", f"page:{page}"))
     if norm_kw:
-        tokens.append(_get_version("product", f"search:q:{norm_kw}"))
+        entries.append(("product", f"search:q:{norm_kw}"))
         if page:
-            tokens.append(_get_version("product", f"search:q:{norm_kw}:page:{page}"))
+            entries.append(("product", f"search:q:{norm_kw}:page:{page}"))
+    tokens = _get_versions(*entries)
     return _compose_token(*tokens)
 
 # ============= COLLECTION HELPERS =============
@@ -202,6 +240,86 @@ def _collect_invalidation_ids(p: Product) -> Tuple[Optional[List[str]], Optional
     return cat_ids or None, sub_ids or None
 
 
+def _collect_category_slugs(*products) -> Optional[List[str]]:
+    slugs: List[str] = []
+    for prod in products:
+        cat = getattr(prod, "category", None)
+        slug = getattr(cat, "slug", None) if cat else None
+        if slug and slug not in slugs:
+            slugs.append(slug)
+    return slugs or None
+
+
+def _collect_subcategory_slugs(*products) -> Optional[List[str]]:
+    slugs: List[str] = []
+    for prod in products:
+        sub = getattr(prod, "subcategory", None)
+        slug = getattr(sub, "slug", None) if sub else None
+        if slug and slug not in slugs:
+            slugs.append(slug)
+    return slugs or None
+
+
+def _rank_to_page(rank: Optional[int], page_size: Optional[int] = None) -> Optional[int]:
+    if not rank or rank <= 0:
+        return None
+    size = page_size or DEFAULT_LIST_LIMIT
+    if size <= 0:
+        return None
+    return math.ceil(rank / size)
+
+
+def _collect_sort_pages(p: Product, page_size: Optional[int] = None) -> Dict[str, List[int]]:
+    page_size = page_size or DEFAULT_LIST_LIMIT
+    pages: Dict[str, List[int]] = {}
+    rank_created = getattr(p, "rank_created_at", None)
+    page_created = _rank_to_page(rank_created, page_size)
+    if page_created:
+        pages.setdefault("created_at", []).append(page_created)
+    rank_price = getattr(p, "rank_price", None)
+    page_price = _rank_to_page(rank_price, page_size)
+    if page_price:
+        pages.setdefault("price", []).append(page_price)
+    return pages
+
+
+def rebuild_product_ranks() -> None:
+    """Recalculate rank fields for all products."""
+    from .models import Product
+
+    price_rank_map: Dict[str, int] = {}
+    for idx, prod in enumerate(
+        Product.objects.order_by("-price", "-created_at", "-id"),
+        start=1,
+    ):
+        price_rank_map[str(prod.id)] = idx
+
+    for idx, prod in enumerate(
+        Product.objects.order_by("-created_at", "-id"),
+        start=1,
+    ):
+        updated = False
+        if getattr(prod, "rank_created_at", None) != idx:
+            prod.rank_created_at = idx
+            updated = True
+        price_rank = price_rank_map.get(str(prod.id))
+        if getattr(prod, "rank_price", None) != price_rank:
+            prod.rank_price = price_rank
+            updated = True
+        if updated:
+            prod.save()
+
+
+def ensure_product_ranks_initialized() -> None:
+    """Run rank rebuild if legacy products are missing rank fields."""
+    from .models import Product
+
+    if Product.objects(rank_created_at__exists=False).first() or Product.objects(
+        rank_price__exists=False
+    ).first():
+        rebuild_product_ranks()
+
+
 # ============= CACHE INVALIDATION =============
 
 def _invalidate_category_cache(*identifiers: str) -> None:
@@ -225,10 +343,14 @@ def _invalidate_subcategory_cache(*identifiers: str, category_ids: Optional[List
 def _invalidate_product_cache(
          *identifiers: str,
         category_ids: Optional[List[str]] = None,
+        category_slugs: Optional[List[str]] = None,
         subcategory_ids: Optional[List[str]] = None,
+        subcategory_slugs: Optional[List[str]] = None,
         segments: Optional[List[str]] = None,
         affected_pages: Optional[List[int]] = None,
         invalidate_all_pages: bool = True,
+        sort_keys: Optional[List[str]] = None,
+        sort_page_map: Optional[Dict[str, List[int]]] = None,
 ) -> None:
     """
     Invalidate product cache with page-level granularity.
@@ -240,6 +362,9 @@ def _invalidate_product_cache(
         invalidate_all_pages: If True, bump global list version (affects all pages)
     """
     pages_to_bump: List[int] = []
+    if sort_keys is None:
+        sort_keys = list(PRODUCT_SORT_KEYS)
+
     if not invalidate_all_pages:
         # Derive target pages either from provided list or default depth
         unique_pages = []
@@ -262,14 +387,27 @@ def _invalidate_product_cache(
     if invalidate_all_pages or not pages_to_bump:
         # Global invalidation - affects all pages
         _bump_version("product", "list")
-    elif affected_pages:
+        for sort_key in sort_keys:
+            _bump_version("product", f"sort:{sort_key}")
+    elif pages_to_bump:
         # Selective invalidation - only specific pages
-        for page_num in affected_pages:
+        for page_num in pages_to_bump:
             _bump_version("product", f"page:{page_num}")
+            for sort_key in sort_keys:
+                _bump_version("product", f"sort:{sort_key}:page:{page_num}")
             # Also invalidate sub-specific pages if subcategory_ids provided
             if subcategory_ids:
                 for sid in subcategory_ids:
                     _bump_version("product", f"sub:{sid}:page:{page_num}")
+                    for sort_key in sort_keys:
+                        _bump_version(
+                            "product", f"sub:{sid}:sort:{sort_key}:page:{page_num}"
+                        )
+
+    if sort_page_map:
+        for sort_key, pages in sort_page_map.items():
+            for page_num in pages:
+                _bump_version("product", f"sort:{sort_key}:page:{page_num}")
 
     _bump_version("product", "suggest")
     _bump_version("product", "search")
@@ -278,11 +416,19 @@ def _invalidate_product_cache(
         for cid in category_ids:
             if cid:
                 _bump_version("product", f"cat:{cid}")
+    if category_slugs:
+        for slug in category_slugs:
+            if slug:
+                _bump_version("product", f"cat_slug:{slug}")
 
     if subcategory_ids:
         for sid in subcategory_ids:
             if sid:
                 _bump_version("product", f"sub:{sid}")
+    if subcategory_slugs:
+        for slug in subcategory_slugs:
+            if slug:
+                _bump_version("product", f"sub_slug:{slug}")
 
     for ident in identifiers:
         if ident:
@@ -307,6 +453,7 @@ def _invalidate_product_with_ids(
         additional_sub_ids: Optional[List[str]] = None,
         affected_pages: Optional[List[int]] = None,
         invalidate_all_pages: bool = True,
+        additional_sort_pages: Optional[Dict[str, List[int]]] = None,
 ) -> None:
     """
     Invalidate product cache with collected IDs.
@@ -316,11 +463,27 @@ def _invalidate_product_with_ids(
         invalidate_all_pages: Whether to invalidate all pages (default: True)
     """
     cat_ids, sub_ids = _collect_invalidation_ids(product)
+    cat_slugs = _collect_category_slugs(product)
+    sub_slugs = _collect_subcategory_slugs(product)
+    sort_pages = _collect_sort_pages(product)
 
     if additional_cat_ids:
         cat_ids = list(set((cat_ids or []) + additional_cat_ids))
     if additional_sub_ids:
         sub_ids = list(set((sub_ids or []) + additional_sub_ids))
+    if additional_sort_pages:
+        sort_pages = sort_pages or {}
+        for sort_key, pages in additional_sort_pages.items():
+            existing = sort_pages.setdefault(sort_key, [])
+            for page in pages:
+                if page not in existing:
+                    existing.append(page)
+    combined_pages = list(affected_pages or [])
+    if sort_pages:
+        for pages in sort_pages.values():
+            for page in pages:
+                if page not in combined_pages:
+                    combined_pages.append(page)
 
     _invalidate_product_cache(
         slug_or_id,
@@ -328,10 +491,14 @@ def _invalidate_product_with_ids(
         str(getattr(product, "id", "")),
         *additional_identifiers,
         category_ids=cat_ids,
+        category_slugs=cat_slugs,
         subcategory_ids=sub_ids,
+        subcategory_slugs=sub_slugs,
         segments=segments,
-        affected_pages=affected_pages,
+        affected_pages=combined_pages,
         invalidate_all_pages=invalidate_all_pages,
+        sort_keys=list(sort_pages.keys()) if sort_pages else list(PRODUCT_SORT_KEYS),
+        sort_page_map=sort_pages,
     )
 
 
@@ -353,6 +520,8 @@ def _int_env(name: str, default: int) -> int:
 DEFAULT_CACHE_TIMEOUT = _int_env("CATALOG_CACHE_TIMEOUT", _int_env("CACHE_DEFAULT_TIMEOUT", 300))
 SUGGEST_CACHE_TIMEOUT = _int_env("CATALOG_SUGGEST_CACHE_TIMEOUT", 60)
 PRODUCT_PAGE_INVALIDATION_DEPTH = _int_env("CATALOG_CACHE_PAGE_INVALIDATION_DEPTH", 3)
+DEFAULT_LIST_LIMIT = _int_env("CATALOG_DEFAULT_LIST_LIMIT", 20)
+PRODUCT_SORT_KEYS: Tuple[str, ...] = ("created_at", "price")
 
 # ============= FINDER HELPERS =============
 

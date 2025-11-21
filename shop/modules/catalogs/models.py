@@ -65,6 +65,8 @@ class Product(Document, AuditMixin):
     is_active   = BooleanField(default=True)
     is_orphan   = BooleanField(default=False)
     orphan_reason = StringField(choices=("category_deleted","subcategory_deleted","invalid_link"))
+    rank_created_at = IntField()
+    rank_price = IntField()
 
 
     meta = {
@@ -72,6 +74,7 @@ class Product(Document, AuditMixin):
         "indexes": [
             {"fields": ["slug"], "unique": True},
             {"fields": ["-created_at"]},
+            {"fields": ["-price"]},
             {"fields": ["is_active","is_orphan"]},
             {"fields": ["category","subcategory"]},
             {"fields": ["name"]},

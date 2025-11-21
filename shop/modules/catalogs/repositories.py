@@ -53,9 +53,33 @@ def prod_get_by_id(oid: ObjectId) -> Optional[Product]:
 def prod_get_by_slug(slug: str) -> Optional[Product]:
     return Product.objects(slug=slug).first()
 
-def prod_list_all(page: int, limit: int) -> Tuple[list[Product], int, dict]:
-    tracker = TimingTracker("prod_list_all_query", meta={"page": page, "limit": limit})
+def prod_list_all(
+    page: int,
+    limit: int,
+    *,
+    category: Optional[Category] = None,
+    subcategory: Optional[SubCategory] = None,
+    active_only: bool = False,
+    sort_by: str = "created_at",
+) -> Tuple[list[Product], int, dict]:
+    meta = {"page": page, "limit": limit, "sort": sort_by}
+    if category:
+        meta["category"] = str(getattr(category, "id", category))
+    if subcategory:
+        meta["subcategory"] = str(getattr(subcategory, "id", subcategory))
+    tracker = TimingTracker("prod_list_all_query", meta=meta)
     qs = Product.objects
+    if category:
+        qs = qs.filter(category=category)
+    if subcategory:
+        qs = qs.filter(subcategory=subcategory)
+    if active_only:
+        qs = qs.filter(is_active=True, is_orphan=False)
+
+    if sort_by == "price":
+        order_fields = ["-price", "-created_at", "-id"]
+    else:
+        order_fields = ["-created_at", "-id"]
 
     try:
         t0 = time.perf_counter()
@@ -63,7 +87,7 @@ def prod_list_all(page: int, limit: int) -> Tuple[list[Product], int, dict]:
         t1 = time.perf_counter()
         tracker.mark("count")
 
-        items = list(qs.order_by("-created_at").skip((page-1)*limit).limit(limit))
+        items = list(qs.order_by(*order_fields).skip((page-1)*limit).limit(limit))
         t2 = time.perf_counter()
         tracker.mark("fetch")
 
@@ -77,13 +101,6 @@ def prod_list_all(page: int, limit: int) -> Tuple[list[Product], int, dict]:
     except Exception as exc:
         tracker.finish(status="error", error=exc)
         raise
-
-def prod_list_by_sub(sub_oid: ObjectId, page: int, limit: int, *, active_only=True) -> Tuple[list[Product], int]:
-    qs = Product.objects(subcategory=sub_oid)
-    if active_only: qs = qs.filter(is_active=True, is_orphan=False)
-    total = qs.count()
-    items = list(qs.order_by("-created_at").skip((page-1)*limit).limit(limit))
-    return items, total
 
 def prod_search_by_name(keyword: str, page: int, limit: int, *, active_only=True) -> Tuple[list[Product], int]:
     kw = (keyword or "").strip()

@@ -9,4 +9,6 @@ from shop import create_app
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    app.run(debug=False, use_reloader=False)
