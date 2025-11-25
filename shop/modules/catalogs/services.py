@@ -2,6 +2,7 @@ from bson.errors import InvalidId
 from mongoengine import ValidationError as MongoValidationError
 import datetime
 import time
+from math import ceil
 from flask import current_app
 from .mappers import _media_public, _spec_public
 from .service_helpers import *
@@ -12,7 +13,8 @@ from .service_helpers import _invalidate_category_cache, versioned_memoize, _cat
     _product_list_version, _product_item_version, \
     _product_media_version, _normalize_media_embedded, _normalize_specs_embedded, _product_spec_version, \
     _invalidate_keyword_cache, _product_suggest_version, _invalidate_product_with_ids, _validate_product_instance, \
-    _product_search_version, _normalize_search_keyword, rebuild_product_ranks, PRODUCT_SORT_KEYS
+    _product_search_version, _normalize_search_keyword, rebuild_product_ranks, PRODUCT_SORT_KEYS, \
+    DEFAULT_LIST_LIMIT, _collect_sort_pages
 from ...core.validation import require_fields
 from ...core.utils import *
 from .repositories import *
@@ -338,14 +340,19 @@ def s_product_create(payload: dict) -> dict:
         result = product_public(p)
 
         # Invalidate first pages (per PRODUCT_PAGE_INVALIDATION_DEPTH) since new items shift pagination
+        total = Product.objects.count()
+        last_page = max(1, ceil(total / DEFAULT_LIST_LIMIT)) if total else 1
+        depth = max(1, PRODUCT_PAGE_INVALIDATION_DEPTH)
+        first_pages = list(range(1, min(depth, last_page) + 1))
+        affected_pages = list({*first_pages, last_page})
         _invalidate_product_with_ids(
             result.get("slug"),
             p,
             ["core", "media", "specs"],
             result.get("id"),
             # Invalidate first pages using configured depth to reduce stale pagination
-            affected_pages=None,
-            invalidate_all_pages=True,
+            affected_pages=affected_pages,
+            invalidate_all_pages=False,
         )
         return result
     except MongoValidationError as e:
@@ -570,18 +577,46 @@ def s_product_delete(slug_or_id: str) -> None:
         p = find_by_slug_or_id("product", slug_or_id)
         slug = getattr(p, "slug", None)
         pid = str(getattr(p, "id", ""))
+        total_before = Product.objects.count()
+        sort_pages = _collect_sort_pages(p)
 
         prod_delete(p)
         rebuild_product_ranks()
 
-        # Delete affects all pages (items shift)
+        # Delete affects nearby pages; invalidate neighbors and last page instead of full wipe
+        neighbors: list[int] = []
+        neighbor_map = {}
+        for sort_key, pages in (sort_pages or {}).items():
+            seen = set()
+            buffered = []
+            for page in pages or []:
+                for delta in (-1, 0, 1):
+                    candidate = page + delta
+                    if candidate > 0 and candidate not in seen:
+                        seen.add(candidate)
+                        buffered.append(candidate)
+                        neighbors.append(candidate)
+            if buffered:
+                neighbor_map[sort_key] = buffered
+
+        last_page_after = max(
+            1, ceil(max(total_before - 1, 0) / DEFAULT_LIST_LIMIT)
+        )
+        neighbors.append(last_page_after)
+        for key in list(neighbor_map.keys()):
+            if last_page_after not in neighbor_map[key]:
+                neighbor_map[key].append(last_page_after)
+
+        affected_pages = list({page for page in neighbors if page > 0})
         _invalidate_product_with_ids(
             slug_or_id,
             p,
             ["core", "media", "specs"],
             slug,
             pid,
-            invalidate_all_pages=True,  # Delete affects pagination
+            invalidate_all_pages=False,
+            affected_pages=affected_pages,
+            additional_sort_pages=neighbor_map or None,
         )
     except AppError:
         raise
