@@ -12,12 +12,6 @@ def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
         session_id = sanitize_session_id(payload.get("session_id"))
         ensure_checkout_access(checkout, user, session_id)
 
-        address = _resolve_address(
-            user,
-            payload.get("address_id"),
-            payload.get("address"),
-        )
-
         has_recipient_name = "recipient_name" in payload
         has_recipient_phone = "recipient_phone" in payload
         has_note = "note" in payload
@@ -37,6 +31,20 @@ def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
         shipment = shipment_get_by_checkout(checkout)
         if shipment:
             address_doc = getattr(shipment, "address", None)
+            current_name = getattr(address_doc, "recipient_name", None) if address_doc else None
+            current_phone = getattr(address_doc, "recipient_phone", None) if address_doc else None
+
+            if not has_recipient_name and not current_name:
+                raise AppError("Recipient name is required", 400, name="INVALID_RECIPIENT_NAME")
+            if not has_recipient_phone and not current_phone:
+                raise AppError("Recipient phone is required", 400, name="INVALID_RECIPIENT_PHONE")
+
+            address = _resolve_address(
+                user,
+                None,
+                payload.get("address"),
+            )
+
             if address_doc:
                 address_doc.user = user
                 address_doc.session_id = session_id
@@ -52,6 +60,18 @@ def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
                     address_doc.note = note
                 address_doc = shipment_address_save(address_doc)
             else:
+                # If shipment exists without address, enforce recipient info before creating
+                if not recipient_name:
+                    raise AppError("Recipient name is required", 400, name="INVALID_RECIPIENT_NAME")
+                if not recipient_phone:
+                    raise AppError("Recipient phone is required", 400, name="INVALID_RECIPIENT_PHONE")
+
+                address = _resolve_address(
+                    user,
+                    None,
+                    payload.get("address"),
+                )
+
                 address_doc = shipment_address_create(
                     {
                         "user": user,
@@ -73,6 +93,18 @@ def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
             shipment.address = address_doc
             shipment = shipment_save(shipment)
         else:
+            # New shipment requires recipient info if not supplied earlier
+            if not (has_recipient_name and recipient_name):
+                raise AppError("Recipient name is required", 400, name="INVALID_RECIPIENT_NAME")
+            if not (has_recipient_phone and recipient_phone):
+                raise AppError("Recipient phone is required", 400, name="INVALID_RECIPIENT_PHONE")
+
+            address = _resolve_address(
+                user,
+                None,
+                payload.get("address"),
+            )
+
             address_doc = shipment_address_create(
                 {
                     "user": user,

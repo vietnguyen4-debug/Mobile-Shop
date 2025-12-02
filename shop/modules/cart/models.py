@@ -1,10 +1,11 @@
-from uuid import uuid4
 from datetime import datetime, timezone
 
+from bson import ObjectId
 from mongoengine import (
     Document,
     EmbeddedDocument,
     EmbeddedDocumentListField,
+    ObjectIdField,
     ReferenceField,
     StringField,
     IntField,
@@ -15,7 +16,7 @@ from ...core.mixins import AuditMixin
 
 
 class CartItem(EmbeddedDocument, AuditMixin):
-    id = StringField(default=lambda: uuid4().hex)
+    id = ObjectIdField(default=ObjectId)
     product: ReferenceField = ReferenceField("Product", required=True)
     quantity: IntField = IntField(default=1, min_value=1, required=True)
 

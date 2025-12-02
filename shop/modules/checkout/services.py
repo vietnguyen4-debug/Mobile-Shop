@@ -176,7 +176,24 @@ def s_cancel_checkout(
         if status == "cancelled":
             return _build_snapshot(checkout)
 
-        shipment_doc, _ = _collect_related_documents(checkout)
+        shipment_doc, payment_docs = _collect_related_documents(checkout)
+
+        # Disallow cancel if any payment is completed to avoid abuse.
+        if any(getattr(payment, "status", None) == "completed" for payment in payment_docs):
+            raise AppError(
+                "Cannot cancel a checkout with completed payment",
+                400,
+                name="CHECKOUT_PAYMENT_COMPLETED",
+            )
+
+        # Disallow cancel if shipment already progressed beyond pending.
+        if shipment_doc and getattr(shipment_doc, "status", None) in ("processing", "shipped", "delivered"):
+            raise AppError(
+                "Cannot cancel a checkout with shipment in progress",
+                400,
+                name="CHECKOUT_SHIPMENT_IN_PROGRESS",
+            )
+
         _update_shipment_status(shipment_doc, status="cancelled")
 
         checkout.status = "cancelled"

@@ -1,9 +1,16 @@
-from .service_helpers import _parse_amount, _normalize_currency, \
-    _parse_paid_at
+from typing import Optional
+
+from .service_helpers import _parse_amount, _normalize_currency, _parse_paid_at
 from ...core.validation import require_fields
 from .repositories import *
-from .mappers import payment_public
-from ...core.utils import *
+from .mappers import payment_public, payment_summary
+from ...core.utils import (
+    AppError,
+    ensure_checkout_access,
+    load_checkout,
+    load_user,
+    sanitize_session_id,
+)
 from ..checkout.repositories import checkout_save
 
 def s_create_offline_payment(user_id: str | None, payload: dict) -> dict:
@@ -78,11 +85,17 @@ def s_complete_offline_payment(payment_id: str, payload: Optional[dict]) -> dict
         raise AppError(f"Failed to complete payment: {str(exc)}", 500, name="DATABASE_ERROR")
 
 
-def s_get_payment(payment_id: str) -> dict:
+def s_get_payment(payment_id: str, user_id: Optional[str], session_id: Optional[str]) -> dict:
     try:
         payment = payment_get_by_id(payment_id)
         if not payment:
             raise AppError("Payment not found", 404, name="PAYMENT_NOT_FOUND")
+        checkout = getattr(payment, "checkout", None)
+        if not checkout:
+            raise AppError("Checkout not found for payment", 404, name="CHECKOUT_NOT_FOUND")
+        user = load_user(user_id)
+        sanitized_session = sanitize_session_id(session_id)
+        ensure_checkout_access(checkout, user, sanitized_session)
         return payment_public(payment)
     except AppError:
         raise
@@ -90,11 +103,14 @@ def s_get_payment(payment_id: str) -> dict:
         raise AppError(f"Failed to retrieve payment: {str(exc)}", 500, name="DATABASE_ERROR")
 
 
-def s_list_payments_by_checkout(checkout_id: str) -> list[dict]:
+def s_list_payments_by_checkout(user_id: Optional[str], session_id: Optional[str], checkout_id: str) -> list[dict]:
     try:
         checkout = load_checkout(checkout_id)
+        user = load_user(user_id)
+        sanitized_session = sanitize_session_id(session_id)
+        ensure_checkout_access(checkout, user, sanitized_session)
         payments = payment_list_by_checkout(checkout)
-        return [payment_public(p) for p in payments]
+        return [payment_summary(p) for p in payments]
     except AppError:
         raise
     except Exception as exc:

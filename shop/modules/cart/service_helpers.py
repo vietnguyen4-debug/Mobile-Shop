@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from bson import ObjectId
+
 from ...core.exceptions import AppError
 from ...core.utils import parse_oid
 from ..users.models import User
@@ -54,10 +56,29 @@ def build_identity(user_id: Optional[str], session_id: Optional[str]) -> CartIde
 
 
 def _save_cart(cart: Cart, *, message: str) -> Cart:
+    _normalize_item_ids(cart)
     try:
         return repo.cart_save(cart)
     except Exception as exc:  # pragma: no cover - defensive
         raise AppError(f"{message}: {str(exc)}", 500, name="DATABASE_ERROR")
+
+
+def _normalize_item_ids(cart: Cart) -> None:
+    """Ensure embedded cart item ids are ObjectId to satisfy model schema."""
+    if not cart or not cart.items:
+        return
+    changed = False
+    for item in cart.items:
+        if isinstance(getattr(item, "id", None), ObjectId):
+            continue
+        try:
+            item.id = ObjectId(str(item.id))
+        except Exception:
+            item.id = ObjectId()
+        changed = True
+    if changed:
+        # Touch cart so save persists normalization
+        cart.updated_at = datetime.now(timezone.utc)
 
 
 def get_cart(identity: CartIdentity, *, create: bool = False) -> Optional[Cart]:
@@ -121,8 +142,9 @@ def load_product(identifier: str) -> Product:
 def find_item_by_id(cart: Cart, item_id: str) -> Optional[CartItem]:
     if not item_id:
         return None
+    target = str(item_id)
     for item in cart.items or []:
-        if item.id == item_id:
+        if str(item.id) == target:
             return item
     return None
 
@@ -161,7 +183,7 @@ def upsert_item(cart: Cart, product: Product, quantity: int) -> Cart:
 
 def set_item_quantity(cart: Cart, item: CartItem, quantity: int) -> Cart:
     if quantity <= 0:
-        cart.items = [it for it in cart.items or [] if it.id != item.id]
+        cart.items = [it for it in cart.items or [] if str(it.id) != str(item.id)]
     else:
         item.quantity = quantity
         _touch_item(item)
@@ -169,7 +191,7 @@ def set_item_quantity(cart: Cart, item: CartItem, quantity: int) -> Cart:
 
 
 def remove_item(cart: Cart, item_id: str) -> Cart:
-    cart.items = [it for it in cart.items or [] if it.id != item_id]
+    cart.items = [it for it in cart.items or [] if str(it.id) != str(item_id)]
     return _save_cart(cart, message="Failed to remove cart item")
 
 

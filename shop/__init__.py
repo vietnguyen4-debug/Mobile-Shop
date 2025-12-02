@@ -10,7 +10,9 @@ from .modules.catalogs.routes import bp as catalogs_bp
 from .modules.catalogs.routes import bp_admin as catalogs_admin_bp
 from .modules.cart.routes import bp as cart_bp
 from .modules.payment.routes import bp as payment_bp
+from .modules.payment.routes import bp_admin as payment_admin_bp
 from .modules.shipment.routes import bp as shipment_bp
+from .modules.shipment.routes import bp_admin as shipment_admin_bp
 from .modules.checkout.routes import bp as checkout_bp
 
 def create_app(config_object=config.DevConfig):
@@ -32,7 +34,9 @@ def create_app(config_object=config.DevConfig):
     app.register_blueprint(catalogs_admin_bp)
     app.register_blueprint(cart_bp)
     app.register_blueprint(payment_bp)
+    app.register_blueprint(payment_admin_bp)
     app.register_blueprint(shipment_bp)
+    app.register_blueprint(shipment_admin_bp)
     app.register_blueprint(checkout_bp)
 
     register_middlewares(app)

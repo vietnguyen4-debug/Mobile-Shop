@@ -6,25 +6,38 @@ from ..payment.mappers import payment_public
 from ..shipment.mappers import shipment_public
 
 
+def _checkout_user_public(checkout) -> Dict[str, Any]:
+    return {
+        "id": str(checkout.id),
+        "cart_id": str(checkout.cart.id) if getattr(checkout, "cart", None) else None,
+        "user_id": str(checkout.user.id),
+        "status": getattr(checkout, "status", None),
+        "currency": getattr(checkout, "currency", "VND"),
+        "total_amount": float(getattr(checkout, "total_amount", 0.0) or 0.0),
+    }
+
+
+def _checkout_guest_public(checkout) -> Dict[str, Any]:
+    return {
+        "id": str(checkout.id),
+        "cart_id": str(checkout.cart.id) if getattr(checkout, "cart", None) else None,
+        "session_id": getattr(checkout, "session_id", None),
+        "status": getattr(checkout, "status", None),
+        "currency": getattr(checkout, "currency", "VND"),
+        "total_amount": float(getattr(checkout, "total_amount", 0.0) or 0.0),
+    }
+
+
 def checkout_public(checkout) -> Optional[Dict[str, Any]]:
     try:
         if not checkout:
             return None
-        return {
-            "id": str(checkout.id),
-            "cart_id": str(checkout.cart.id) if getattr(checkout, "cart", None) else None,
-            "user_id": str(checkout.user.id) if getattr(checkout, "user", None) else None,
-            "session_id": getattr(checkout, "session_id", None),
-            "status": getattr(checkout, "status", None),
-            "currency": getattr(checkout, "currency", "VND"),
-            "total_amount": float(getattr(checkout, "total_amount", 0.0) or 0.0),
-            "created_at": checkout.created_at.isoformat()
-            if getattr(checkout, "created_at", None)
-            else None,
-            "updated_at": checkout.updated_at.isoformat()
-            if getattr(checkout, "updated_at", None)
-            else None,
-        }
+        user = getattr(checkout, "user", None)
+        session_id = getattr(checkout, "session_id", None)
+        is_guest = bool(session_id) and (user is None or not getattr(user, "is_active", True))
+        if user and not is_guest:
+            return _checkout_user_public(checkout)
+        return _checkout_guest_public(checkout)
     except Exception as exc:  # pragma: no cover - defensive
         raise AppError(f"Failed to map checkout: {str(exc)}", 500, name="MAPPING_ERROR")
 

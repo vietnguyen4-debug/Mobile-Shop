@@ -1,7 +1,7 @@
 from flask import request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from . import bp
+from . import bp, bp_admin
 from .services import s_assign_shipment, s_get_shipment_for_checkout, s_complete_shipment
 from ...core.rbac import roles_required
 from ...core.responses import ok
@@ -45,7 +45,7 @@ def r_get_shipment(checkout_id):
     )
     return ok(shipment, "Shipment retrieved successfully.")
 
-@bp.post("/<shipment_id>/complete")
+@bp_admin.post("/<shipment_id>/complete")
 @jwt_required()
 @roles_required("admin")
 def r_complete_shipment(shipment_id):

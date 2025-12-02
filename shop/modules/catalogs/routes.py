@@ -93,6 +93,13 @@ def r_product_suggest():
         raise AppError("Invalid limit parameter", 400, name="INVALID_LIMIT")
     return ok(s_keyword_suggest(kw, limit), "Product suggest products listed successfully.")
 
+@bp.get("/products/search")
+def r_product_search():
+    kw = request.args.get("keyword", "") or request.args.get("q", "")
+    page = request.args.get("page", 1)
+    limit = request.args.get("limit", 20)
+    return ok(s_product_search(kw, page, limit), "Products searched successfully.")
+
 
 #=============ADMIN==============
 #-------CATEGORY----------

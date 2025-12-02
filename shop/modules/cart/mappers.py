@@ -16,28 +16,19 @@ def _to_float(value) -> float:
 def _product_info(item, user=None):
     product = getattr(item, "product", None)
     if not product:
-        return None, None, None, 0.0, 0.0, None
+        return None, 0.0, 0.0, None
     product_id = str(product.id) if getattr(product, "id", None) else None
     pricing = effective_price(product, user=user)
     unit_price = _to_float(pricing.get("price")) if isinstance(pricing, dict) else 0.0
     base_price = _to_float(pricing.get("base_price")) if isinstance(pricing, dict) else unit_price
     applied = pricing.get("applied") if isinstance(pricing, dict) else None
-    return (
-        product_id,
-        getattr(product, "name", None),
-        getattr(product, "slug", None),
-        unit_price,
-        base_price,
-        applied,
-    )
+    return product_id, unit_price, base_price, applied
 
 
 def cart_item_public(item, *, user=None):
     try:
         (
             product_id,
-            product_name,
-            product_slug,
             unit_price,
             base_price,
             applied,
@@ -45,10 +36,8 @@ def cart_item_public(item, *, user=None):
         quantity = int(getattr(item, "quantity", 0) or 0)
         total_price = unit_price * quantity
         return {
-            "id": item.id,
+            "id": str(item.id) if getattr(item, "id", None) else None,
             "product_id": product_id,
-            "product_name": product_name,
-            "product_slug": product_slug,
             "unit_price": unit_price,
             "quantity": quantity,
             "total_price": total_price,
@@ -59,8 +48,6 @@ def cart_item_public(item, *, user=None):
             }
             if product_id
             else None,
-            "created_at": item.created_at.isoformat() if getattr(item, "created_at", None) else None,
-            "updated_at": item.updated_at.isoformat() if getattr(item, "updated_at", None) else None,
         }
     except Exception as exc:  # pragma: no cover - defensive
         raise AppError(f"Failed to map cart item: {str(exc)}", 500, name="MAPPING_ERROR")
@@ -79,8 +66,6 @@ def cart_public(cart):
             "items": items,
             "total_quantity": total_quantity,
             "subtotal": subtotal,
-            "created_at": cart.created_at.isoformat() if getattr(cart, "created_at", None) else None,
-            "updated_at": cart.updated_at.isoformat() if getattr(cart, "updated_at", None) else None,
         }
     except AppError:
         raise

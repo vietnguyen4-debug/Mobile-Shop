@@ -6,7 +6,6 @@ from .services import (
     s_get_cart,
     s_add_item,
     s_update_item,
-    s_remove_item,
     s_merge_cart_on_login,
 )
 from ...core.responses import ok, created
@@ -94,20 +93,22 @@ def r_update_item(item_id):
     session_id = _extract_session_id()
     payload = dict(data)
     payload.pop("session_id", None)
+    quantity_value = payload.get("quantity")
+    removal_requested = False
+    try:
+        if quantity_value is not None and int(quantity_value) <= 0:
+            removal_requested = True
+    except (TypeError, ValueError):
+        removal_requested = False
     uid = get_jwt_identity()
     result = s_update_item(uid, session_id, item_id, payload)
-    response = ok(result, "Cart item updated successfully.")
-    # For logged-in users, do not set session cookie (delete if present)
-    return _attach_session_cookie(response, None if uid else result.get("session_id"))
-
-
-@bp.delete("/items/<item_id>")
-@jwt_required(optional=True)
-def r_remove_item(item_id):
-    uid = get_jwt_identity()
-    session_id = _extract_session_id()
-    result = s_remove_item(uid, session_id, item_id)
-    response = ok(result, "Cart item removed successfully.")
+    target_id = str(item_id)
+    items = result.get("items", []) or []
+    removed = removal_requested or not any(str(it.get("id")) == target_id for it in items)
+    if not removed and result.get("total_quantity", 0) == 0:
+        removed = True
+    message = "Cart item removed successfully." if removed else "Cart item updated successfully."
+    response = ok(result, message)
     # For logged-in users, do not set session cookie (delete if present)
     return _attach_session_cookie(response, None if uid else result.get("session_id"))
 

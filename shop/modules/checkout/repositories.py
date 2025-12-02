@@ -14,11 +14,11 @@ def _apply_expiration(checkout: Checkout) -> Checkout:
         return checkout
 
     status = getattr(checkout, "status", None)
-    # Pending/processing checkouts should eventually disappear if abandoned, but once
-    # they transition to a terminal state (completed/cancelled) we keep the record by
-    # clearing the TTL timestamp.
+    # Set TTL once for active checkouts; do not extend on every save to avoid
+    # indefinite keep-alive via repeated POSTs. Terminal states clear TTL.
     if status in ACTIVE_STATUSES:
-        checkout.expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        if not getattr(checkout, "expires_at", None):
+            checkout.expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
     else:
         checkout.expires_at = None
     return checkout

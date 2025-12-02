@@ -1,6 +1,6 @@
 from bson.errors import InvalidId
 from mongoengine import ValidationError as MongoValidationError
-import datetime
+from datetime import datetime
 import time
 from math import ceil
 from flask import current_app
@@ -345,6 +345,7 @@ def s_product_create(payload: dict) -> dict:
         depth = max(1, PRODUCT_PAGE_INVALIDATION_DEPTH)
         first_pages = list(range(1, min(depth, last_page) + 1))
         affected_pages = list({*first_pages, last_page})
+        sort_pages = _collect_sort_pages(p)
         _invalidate_product_with_ids(
             result.get("slug"),
             p,
@@ -353,6 +354,7 @@ def s_product_create(payload: dict) -> dict:
             # Invalidate first pages using configured depth to reduce stale pagination
             affected_pages=affected_pages,
             invalidate_all_pages=False,
+            additional_sort_pages=sort_pages,
         )
         return result
     except MongoValidationError as e:

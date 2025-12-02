@@ -92,10 +92,6 @@ def _build_resolved_user_address(address: Address) -> ResolvedAddress:
 def _resolve_address(
     user: Optional[User], address_id: Any, address_payload: Any
 ) -> ResolvedAddress:
-    if address_id not in (None, ""):
-        address = _get_user_address(user, address_id)
-        return _build_resolved_user_address(address)
-
     if address_payload is not None:
         address_line, city = _parse_address_payload(address_payload)
         return ResolvedAddress(
@@ -104,16 +100,9 @@ def _resolve_address(
             source="user" if user else "guest",
             user_address_id=None,
         )
-    if user:
-        default_address = next(
-            (address for address in user.addresses or [] if getattr(address, "is_default", False)),
-            None,
-        )
-        if default_address is not None:
-            return _build_resolved_user_address(default_address)
 
     raise AppError(
-        "Either address_id or address object must be provided",
+        "Address object is required",
         400,
         name="INVALID_ADDRESS",
     )
