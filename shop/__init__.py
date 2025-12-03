@@ -1,4 +1,8 @@
 from flask import Flask
+from dotenv import load_dotenv
+
+# Ensure environment variables from .env are loaded for both Flask and Celery contexts.
+load_dotenv()
 
 import config
 from .extensions import db, jwt, cors, cache
@@ -130,4 +134,3 @@ def _warmup_redis() -> None:
     redis_client = getattr(cache, "client", None)
     if redis_client:
         redis_client.ping()
-
