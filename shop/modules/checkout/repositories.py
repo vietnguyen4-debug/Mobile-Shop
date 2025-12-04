@@ -5,10 +5,12 @@ from flask import current_app
 from .models import Checkout
 
 
-ACTIVE_STATUSES = ("pending", "processing")
+# Only pending checkouts carry TTL; processing/completed/cancelled have no TTL.
+ACTIVE_STATUSES = ("pending",)
 
 def _apply_expiration(checkout: Checkout) -> Checkout:
     ttl_seconds = current_app.config.get("CHECKOUT_PENDING_TTL_SECONDS")
+    renew_threshold = current_app.config.get("CHECKOUT_TTL_RENEW_THRESHOLD_SECONDS", 0)
     if not ttl_seconds or ttl_seconds <= 0:
         checkout.expires_at = None
         return checkout
@@ -17,8 +19,13 @@ def _apply_expiration(checkout: Checkout) -> Checkout:
     # Set TTL once for active checkouts; do not extend on every save to avoid
     # indefinite keep-alive via repeated POSTs. Terminal states clear TTL.
     if status in ACTIVE_STATUSES:
-        if not getattr(checkout, "expires_at", None):
-            checkout.expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        expires_at = getattr(checkout, "expires_at", None)
+        now = datetime.now(timezone.utc)
+        if not expires_at:
+            checkout.expires_at = now + timedelta(seconds=ttl_seconds)
+        elif renew_threshold and expires_at <= now + timedelta(seconds=renew_threshold):
+            # Renew when close to expiry and user is still interacting.
+            checkout.expires_at = now + timedelta(seconds=ttl_seconds)
     else:
         checkout.expires_at = None
     return checkout
@@ -69,4 +76,3 @@ def checkout_get_by_cart(cart) -> Optional[Checkout]:
     if not cart:
         return None
     return Checkout.objects(cart=cart).order_by("-created_at").first()
-

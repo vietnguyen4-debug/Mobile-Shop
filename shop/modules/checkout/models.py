@@ -21,7 +21,7 @@ class Checkout(Document, AuditMixin):
             {"fields": ["user", "-created_at"], "name": "idx_checkout_user_created"},
             {"fields": ["session_id"], "name": "idx_checkout_session"},
             {"fields": ["status", "-created_at"], "name": "idx_checkout_status_created"},
-            {"fields": ["expires_at"], "expireAfterSeconds": 0},
+            {"fields": ["expires_at"], "name": "idx_checkout_expires_at"},
         ],
     }
 

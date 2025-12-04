@@ -15,6 +15,12 @@ class DevConfig:
     CHECKOUT_PENDING_TTL_SECONDS = int(
         os.environ.get("CHECKOUT_PENDING_TTL_SECONDS", 24 * 60 * 60)
     )
+    CHECKOUT_TTL_RENEW_THRESHOLD_SECONDS = int(
+        os.environ.get("CHECKOUT_TTL_RENEW_THRESHOLD_SECONDS", 5 * 60)
+    )
+    CANCEL_EXPIRED_CHECKOUTS_INTERVAL_SECONDS = int(
+        os.environ.get("CANCEL_EXPIRED_CHECKOUTS_INTERVAL_SECONDS", 600)
+    )
     CACHE_TYPE = os.environ.get("CACHE_TYPE", "RedisCache")
     CACHE_DEFAULT_TIMEOUT = int(os.environ.get("CACHE_DEFAULT_TIMEOUT", 300))
     CACHE_REDIS_URL = os.environ["CACHE_REDIS_URL"]

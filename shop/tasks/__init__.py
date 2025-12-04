@@ -1,6 +1,5 @@
 from celery import Celery
 from dotenv import load_dotenv
-
 # Ensure .env is loaded when the Celery worker starts outside of Flask.
 load_dotenv()
 
@@ -39,6 +38,16 @@ def create_celery_app(flask_app=None) -> Celery:
                 return super().__call__(*args, **kwargs)
 
     celery.Task = AppContextTask
+
+    # Configure beat schedule to auto-cancel expired checkouts if enabled.
+    interval = int(flask_app.config.get("CANCEL_EXPIRED_CHECKOUTS_INTERVAL_SECONDS", 0))
+    if interval > 0:
+        celery.conf.beat_schedule = {
+            "cancel-expired-checkouts": {
+                "task": "tasks.cancel_expired_checkouts",
+                "schedule": interval,  # seconds
+            }
+        }
     return celery
 
 
@@ -47,6 +56,7 @@ celery = create_celery_app()
 # Import built-in tasks so the worker registers them on startup.
 try:
     from . import ping  # noqa: F401
+    from . import cleanup  # noqa: F401
 except Exception:
     # Avoid import errors during partial initialization; tasks can still be registered later.
     pass

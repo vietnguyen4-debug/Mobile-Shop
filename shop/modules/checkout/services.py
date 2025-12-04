@@ -149,6 +149,7 @@ def s_get_checkout(
         user = load_user(user_id)
         sanitized_session = sanitize_session_id(session_id)
         ensure_checkout_access(checkout, user, sanitized_session)
+        checkout = checkout_save(checkout)  # refresh expiration if near TTL
         return _build_snapshot(checkout)
     except AppError:
         raise
@@ -219,6 +220,14 @@ def s_complete_checkout(
         user = load_user(user_id)
         session_id = sanitize_session_id(payload.get("session_id"))
         ensure_checkout_access(checkout, user, session_id)
+
+        status = getattr(checkout, "status", None) or "pending"
+        if status == "cancelled":
+            raise AppError(
+                "Cannot complete a cancelled checkout",
+                400,
+                name="CHECKOUT_CANCELLED",
+            )
 
         shipment_doc, payment_docs = _collect_related_documents(checkout)
         if not shipment_doc:
