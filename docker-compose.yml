@@ -1,0 +1,31 @@
+services:
+  web:
+    build: .
+    command: gunicorn app:app -b 0.0.0.0:5000 --reload
+    env_file: .env
+    environment:
+      # override broker/backend sang service redis nội bộ
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      # giữ CACHE_REDIS_URL theo .env (cloud)
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+    ports:
+      - "5000:5000"
+  worker:
+    build: .
+    command: celery -A shop.tasks worker --loglevel=info
+    env_file: .env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
