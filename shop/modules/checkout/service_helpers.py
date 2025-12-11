@@ -138,13 +138,8 @@ def _create_anonymous_user(customer: CustomerInfo) -> User:
 
 
 def _find_existing_checkout(cart: Cart) -> Optional[Checkout]:
-    checkout = checkout_get_by_cart(cart)
-    if not checkout:
-        return None
-    status = getattr(checkout, "status", None)
-    if status in ("cancelled", "completed"):
-        return None
-    return checkout
+    # Always create a fresh checkout for each start; do not reuse previous ones.
+    return None
 
 
 def _compute_cart_snapshot(cart: Cart) -> Tuple[dict, float]:

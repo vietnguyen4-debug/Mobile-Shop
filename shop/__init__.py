@@ -1,8 +1,15 @@
 from flask import Flask
 from dotenv import load_dotenv
+import logging
 
 # Ensure environment variables from .env are loaded for both Flask and Celery contexts.
 load_dotenv()
+
+# Basic logging configuration so app loggers (including VNPAY debug logs)
+# are visible both when running via `app.py` and under gunicorn.
+_root_logger = logging.getLogger()
+if not _root_logger.handlers:
+    logging.basicConfig(level=logging.INFO)
 
 import config
 from .extensions import db, jwt, cors, cache

@@ -7,7 +7,9 @@ class Payment(Document, AuditMixin):
     checkout = ReferenceField("Checkout", required=True)
     user = ReferenceField("User", required=False, null=True)
     session_id = StringField(required=False, max_length=120)
-    method = StringField(required=True, default="offline", choices=("offline",))
+    method = StringField(required=True, default="offline", choices=("offline", "online"))
+    provider = StringField(required=False, max_length=50)
+    provider_ref = StringField(required=False, max_length=120)
     amount = FloatField(required=True, min_value=0)
     currency = StringField(default="VND", max_length=10)
     status = StringField(

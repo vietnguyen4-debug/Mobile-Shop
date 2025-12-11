@@ -1,9 +1,10 @@
 services:
   web:
     build: .
-    command: gunicorn app:app -b 0.0.0.0:5000 --reload
+    command: gunicorn app:app -b 0.0.0.0:5000 --reload --access-logfile -
     env_file: .env
     environment:
+      TZ: Asia/Ho_Chi_Minh
       # override broker/backend sang service redis nội bộ
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -19,6 +20,7 @@ services:
     command: celery -A shop.tasks worker --loglevel=info
     env_file: .env
     environment:
+      TZ: Asia/Ho_Chi_Minh
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
@@ -31,6 +33,7 @@ services:
     command: celery -A shop.tasks beat --loglevel=info
     env_file: .env
     environment:
+      TZ: Asia/Ho_Chi_Minh
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
     volumes:
@@ -41,3 +44,13 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:3
+    depends_on:
+      - web
+    env_file: .env
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command: ["http", "web:5000"]

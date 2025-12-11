@@ -7,8 +7,10 @@ from ...core.exceptions import AppError
 from ...core.utils import sanitize_session_id
 from . import bp, bp_admin
 from .services import (
-    s_complete_offline_payment,
+    s_complete_payment,
     s_create_offline_payment,
+    s_create_online_payment,
+    s_handle_vnpay_webhook,
     s_get_payment,
     s_list_payments_by_checkout,
 )
@@ -69,5 +71,63 @@ def r_create_offline_payment():
 @roles_required("admin")
 def r_complete_offline_payment(payment_id):
     data = request.get_json(silent=True) or {}
-    payment = s_complete_offline_payment(payment_id, data)
+    payment = s_complete_payment(payment_id, data)
     return ok(payment, "Payment marked as completed.")
+
+
+@bp.post("/online")
+@jwt_required(optional=True)
+def r_create_online_payment():
+    data = request.get_json(silent=True) or {}
+    session_id = _extract_session_id()
+    if session_id and "session_id" not in data:
+        data = dict(data)
+        data["session_id"] = session_id
+    payment = s_create_online_payment(get_jwt_identity(), data)
+    return created(payment, "Online payment created successfully.")
+
+
+@bp.route("/webhook/vnpay", methods=["GET", "POST"])
+def r_vnpay_webhook():
+    # VNPAY IPN/ReturnUrl can be GET or POST; accept both sources.
+    params = request.args.to_dict(flat=True)
+    if request.form:
+        params.update(request.form.to_dict(flat=True))
+    resp_body, status = s_handle_vnpay_webhook(params)
+    return resp_body, status
+
+
+@bp.get("/vnpay/return")
+def r_vnpay_return():
+    """
+    Simple return page for VNPAY sandbox while frontend is not ready.
+    Echoes back key VNPAY params (e.g., vnp_ResponseCode, vnp_TxnRef)
+    to make debugging easier.
+    """
+    params = request.args.to_dict(flat=True)
+
+    # Optionally reuse webhook handler logic to verify signature / update payment.
+    # Any errors here should not break the return page.
+    if params:
+        try:
+            s_handle_vnpay_webhook(params)
+        except Exception:
+            pass
+
+    txn_ref = params.get("vnp_TxnRef") or ""
+    rsp_code = params.get("vnp_ResponseCode") or ""
+    message = (
+        "Thanh toán thành công."
+        if rsp_code == "00"
+        else "Thanh toán thất bại hoặc đang chờ xử lý."
+    )
+
+    html = (
+        "<h1>Payment processed</h1>"
+        f"<p>{message}</p>"
+        "<p>(Trang này chỉ dùng tạm cho môi trường sandbox; "
+        "trong production sẽ redirect về frontend.)</p>"
+        f"<p><strong>vnp_TxnRef:</strong> {txn_ref}</p>"
+        f"<p><strong>vnp_ResponseCode:</strong> {rsp_code}</p>"
+    )
+    return html, 200, {"Content-Type": "text/html"}

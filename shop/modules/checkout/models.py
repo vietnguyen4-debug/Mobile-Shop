@@ -3,7 +3,7 @@ from mongoengine import *
 from ...core.mixins import AuditMixin
 
 class Checkout(Document, AuditMixin):
-    cart = ReferenceField("Cart", required=True, unique=True)
+    cart = ReferenceField("Cart", required=True)
     user = ReferenceField("User", required=False, null=True)
     session_id = StringField(required=False, max_length=120)
     status = StringField(
@@ -17,7 +17,7 @@ class Checkout(Document, AuditMixin):
     meta = {
         "collection": "checkout",
         "indexes": [
-            {"fields": ["cart"], "unique": True, "name": "idx_checkout_cart"},
+            {"fields": ["cart", "-created_at"], "name": "idx_checkout_cart_created"},
             {"fields": ["user", "-created_at"], "name": "idx_checkout_user_created"},
             {"fields": ["session_id"], "name": "idx_checkout_session"},
             {"fields": ["status", "-created_at"], "name": "idx_checkout_status_created"},
