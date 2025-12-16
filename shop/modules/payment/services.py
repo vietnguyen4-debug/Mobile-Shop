@@ -25,6 +25,26 @@ from datetime import datetime, timezone
 
 _vnp_logger = logging.getLogger("shop.payment.vnpay")
 
+
+def _cancel_other_pending_payments(current_payment):
+    """
+    Cancel any other pending payments for the same checkout to prevent overpay.
+    """
+    try:
+        checkout = getattr(current_payment, "checkout", None)
+        if not checkout:
+            return
+        current_id = str(getattr(current_payment, "id", ""))
+        for other in payment_list_by_checkout(checkout):
+            if str(getattr(other, "id", "")) == current_id:
+                continue
+            if getattr(other, "status", None) == "pending":
+                other.status = "cancelled"
+                payment_save(other)
+    except Exception:
+        # Defensive: do not fail main payment flow if cleanup fails.
+        pass
+
 def _create_payment(user_id: str | None, payload: dict, *, method: str, require_access: bool) -> dict:
     amount_override = payload.pop("_amount_override", None)
     if amount_override is None:
@@ -106,6 +126,18 @@ def s_create_online_payment(user_id: str | None, payload: dict) -> dict:
     if outstanding <= 0:
         raise AppError("Checkout already paid", 400, name="CHECKOUT_PAID")
 
+    # Prevent multiple online payments pending at the same time to avoid overpay.
+    if any(
+        getattr(p, "status", None) == "pending"
+        and getattr(p, "method", None) == "online"
+        for p in payments
+    ):
+        raise AppError(
+            "An online payment is already pending for this checkout",
+            400,
+            name="PAYMENT_PENDING_EXISTS",
+        )
+
     provider = payload.get("provider")
     note = payload.get("note")
 
@@ -151,6 +183,7 @@ def s_complete_payment(payment_id: str, payload: Optional[dict]) -> dict:
         if provider_ref is not None:
             payment.provider_ref = provider_ref.strip() or None
         payment = payment_save(payment)
+        _cancel_other_pending_payments(payment)
         return payment_public(payment)
     except AppError:
         raise
@@ -233,11 +266,7 @@ def s_handle_vnpay_webhook(params: dict):
         payment.provider_ref = txn_ref
         payment_save(payment)
 
-        checkout = getattr(payment, "checkout", None)
-        if checkout and getattr(checkout, "status", None) not in ("completed", "cancelled"):
-            checkout.status = "completed"
-            checkout_save(checkout)
-
+        _cancel_other_pending_payments(payment)
         _vnp_logger.info(
             "VNPAY payment marked completed",
             extra={
