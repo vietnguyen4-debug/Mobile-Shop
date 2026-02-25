@@ -17,4 +17,4 @@ RUN apt-get update \
 
 COPY . .
 
-CMD ["gunicorn", "app:app", "-b", "0.0.0.0:8000"]
+CMD ["sh", "-c", "gunicorn app:app -b 0.0.0.0:${PORT:-8000}"]
