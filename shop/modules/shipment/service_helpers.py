@@ -7,6 +7,7 @@ from typing import Any, Optional
 from ...core.exceptions import AppError
 from ..users.models import Address, User
 from ...core.utils import normalize_required_string
+from ..payment.repositories import payment_list_by_checkout
 
 
 @dataclass
@@ -133,3 +134,45 @@ def _normalize_recipient_phone(value: Any) -> Optional[str]:
         code="INVALID_RECIPIENT_PHONE",
         max_length=30,
     )
+
+
+def _ensure_checkout_paid(checkout) -> None:
+    payments = payment_list_by_checkout(checkout)
+    if not any(getattr(p, "status", None) == "completed" for p in payments):
+        raise AppError(
+            "Shipment status can only be updated after payment is completed",
+            400,
+            name="SHIPMENT_UNPAID",
+        )
+
+
+def _validate_shipment_status(status: Any) -> str:
+    if not isinstance(status, str):
+        raise AppError(
+            "Shipment status must be a string", 400, name="INVALID_SHIPMENT_STATUS"
+        )
+    cleaned = status.strip().lower()
+    allowed = {"pending", "processing", "shipped", "delivered", "cancelled"}
+    if cleaned not in allowed:
+        raise AppError("Invalid shipment status", 400, name="INVALID_SHIPMENT_STATUS")
+    return cleaned
+
+
+def _ensure_valid_shipment_transition(current: str, target: str) -> None:
+    if target == current:
+        return
+    if current in ("delivered", "cancelled"):
+        raise AppError("Shipment is locked", 400, name="SHIPMENT_LOCKED")
+
+    allowed_next = {
+        "pending": {"processing", "cancelled"},
+        # Allow admin to mark delivered directly from processing (internal shipping flow).
+        "processing": {"shipped", "delivered", "cancelled"},
+        "shipped": {"delivered", "cancelled"},
+    }
+    if target not in allowed_next.get(current, set()):
+        raise AppError(
+            "Invalid shipment status transition",
+            400,
+            name="INVALID_SHIPMENT_TRANSITION",
+        )

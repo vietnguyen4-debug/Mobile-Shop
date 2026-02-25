@@ -6,6 +6,8 @@ from typing import Any
 from datetime import datetime, timezone, timedelta
 from ...core.exceptions import AppError
 import logging
+from uuid import uuid4
+import httpx
 
 
 _vnp_logger = logging.getLogger("shop.payment.vnpay")
@@ -65,8 +67,99 @@ def _vnpay_hash(params: dict, secret: str) -> str:
     raw = "&".join(f"{k}={urllib.parse.quote_plus(str(v))}" for k, v in items)
     return hmac.new(secret.encode(), raw.encode(), hashlib.sha512).hexdigest().upper()
 
+def _now_vn_str() -> str:
+    tz = timezone(timedelta(hours=7))
+    return datetime.now(tz).strftime("%Y%m%d%H%M%S")
 
-def _build_vnpay_payment_url(payment: dict) -> str | None:
+def _vnpay_api_hash_pipe(values: list[str], secret: str) -> str:
+    raw = "|".join(values)
+    return hmac.new(secret.encode(), raw.encode(), hashlib.sha512).hexdigest().upper()
+
+def vnpay_querydr(
+    *,
+    txn_ref: str,
+    transaction_date: str,
+    order_info: str,
+    ip_addr: str,
+) -> dict:
+    """
+    Call VNPAY QueryDR API to query transaction result.
+    Returns parsed JSON response (dict). Raises AppError on request failures.
+    """
+    tmn_code = os.environ.get("VNPAY_TMN_CODE", "")
+    secret = os.environ.get("VNPAY_SECRET_KEY", "")
+    api_url = os.environ.get(
+        "VNPAY_QUERYDR_URL",
+        "https://sandbox.vnpayment.vn/merchant_webapi/api/transaction",
+    )
+    if not tmn_code or not secret:
+        raise AppError("VNPAY config missing", 500, name="VNPAY_NOT_CONFIGURED")
+
+    request_id = uuid4().hex
+    version = "2.1.0"
+    command = "querydr"
+    create_date = _now_vn_str()
+    payload = {
+        "vnp_RequestId": request_id,
+        "vnp_Version": version,
+        "vnp_Command": command,
+        "vnp_TmnCode": tmn_code,
+        "vnp_TxnRef": str(txn_ref),
+        "vnp_OrderInfo": str(order_info or ""),
+        "vnp_TransactionDate": str(transaction_date),
+        "vnp_CreateDate": create_date,
+        "vnp_IpAddr": str(ip_addr or "127.0.0.1"),
+    }
+    hash_values = [
+        payload["vnp_RequestId"],
+        payload["vnp_Version"],
+        payload["vnp_Command"],
+        payload["vnp_TmnCode"],
+        payload["vnp_TxnRef"],
+        payload["vnp_TransactionDate"],
+        payload["vnp_CreateDate"],
+        payload["vnp_IpAddr"],
+        payload["vnp_OrderInfo"],
+    ]
+    payload["vnp_SecureHash"] = _vnpay_api_hash_pipe(hash_values, secret)
+
+    _vnp_logger.info(
+        "VNPAY QueryDR request",
+        extra={
+            "api_url": api_url,
+            "txn_ref": txn_ref,
+            "transaction_date": transaction_date,
+            "request_id": request_id,
+        },
+    )
+
+    try:
+        resp = httpx.post(api_url, json=payload, timeout=15.0)
+    except Exception as exc:
+        raise AppError(f"VNPAY QueryDR request failed: {exc}", 502, name="VNPAY_QUERYDR_FAILED")
+
+    try:
+        data = resp.json()
+    except Exception:
+        raise AppError(
+            f"VNPAY QueryDR invalid JSON response (HTTP {resp.status_code})",
+            502,
+            name="VNPAY_QUERYDR_INVALID_RESPONSE",
+        )
+
+    _vnp_logger.info(
+        "VNPAY QueryDR response",
+        extra={
+            "http_status": resp.status_code,
+            "txn_ref": txn_ref,
+            "vnp_ResponseCode": data.get("vnp_ResponseCode"),
+            "vnp_TransactionStatus": data.get("vnp_TransactionStatus"),
+        },
+    )
+    return data
+
+
+def _build_vnpay_payment_url(payment: dict, *, ip_addr: str | None = None) -> tuple[str, str] | None:
     """
     Build a VNPAY payment URL from payment data; returns None if not applicable.
     """
@@ -78,18 +171,16 @@ def _build_vnpay_payment_url(payment: dict) -> str | None:
     tmn_code = os.environ.get("VNPAY_TMN_CODE")
     secret = os.environ.get("VNPAY_SECRET_KEY")
     return_url = os.environ.get("VNPAY_RETURN_URL")
-    ipn_url = os.environ.get("VNPAY_IPN_URL")
     payment_url = os.environ.get(
         "VNPAY_PAYMENT_URL", "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
     )
-    if not all([tmn_code, secret, return_url, ipn_url, payment_url]):
+    if not all([tmn_code, secret, return_url, payment_url]):
         _vnp_logger.warning(
             "VNPAY config missing; skipping URL build",
             extra={
                 "tmn_code": bool(tmn_code),
                 "has_secret": bool(secret),
                 "has_return_url": bool(return_url),
-                "has_ipn_url": bool(ipn_url),
                 "payment_url": bool(payment_url),
             },
         )
@@ -114,6 +205,10 @@ def _build_vnpay_payment_url(payment: dict) -> str | None:
         return None
 
     tz = timezone(timedelta(hours=7))
+    now = datetime.now(tz)
+    create_date = now.strftime("%Y%m%d%H%M%S")
+    expire_minutes = int(os.environ.get("VNPAY_EXPIRE_MINUTES", "15") or "15")
+    expire_date = (now + timedelta(minutes=expire_minutes)).strftime("%Y%m%d%H%M%S")
     params = {
         "vnp_Version": "2.1.0",
         "vnp_Command": "pay",
@@ -123,10 +218,11 @@ def _build_vnpay_payment_url(payment: dict) -> str | None:
         "vnp_TxnRef": provider_ref,
         "vnp_OrderInfo": f"Thanh toan checkout {checkout_id}" if checkout_id else "Thanh toan don hang",
         "vnp_OrderType": "other",
+        "vnp_IpAddr": (ip_addr or "127.0.0.1")[:45],
         "vnp_Locale": "vn",
         "vnp_ReturnUrl": return_url,
-        "vnp_IpnUrl": ipn_url,
-        "vnp_CreateDate": datetime.now(tz).strftime("%Y%m%d%H%M%S"),
+        "vnp_CreateDate": create_date,
+        "vnp_ExpireDate": expire_date,
     }
     params["vnp_SecureHashType"] = "HMACSHA512"
     params["vnp_SecureHash"] = _vnpay_hash(params, secret)
@@ -146,5 +242,7 @@ def _build_vnpay_payment_url(payment: dict) -> str | None:
     except Exception:
         # Logging must not break payment flow.
         pass
-    query = "&".join(f"{k}={urllib.parse.quote_plus(str(v))}" for k, v in params.items())
-    return f"{payment_url}?{query}"
+    query = "&".join(
+        f"{k}={urllib.parse.quote_plus(str(params[k]))}" for k in sorted(params.keys())
+    )
+    return f"{payment_url}?{query}", create_date

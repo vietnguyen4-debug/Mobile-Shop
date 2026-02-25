@@ -25,7 +25,7 @@ class ShipmentAddress(Document, AuditMixin):
 
 
 class Shipment(Document, AuditMixin):
-    checkout = ReferenceField("Checkout", required=True, unique=True)
+    checkout = ReferenceField("Checkout", required=True)
     user = ReferenceField("User", required=False, null=True)
     address = ReferenceField("ShipmentAddress", required=False, null=True)
     session_id = StringField(required=False, max_length=120)
@@ -38,7 +38,15 @@ class Shipment(Document, AuditMixin):
     meta = {
         "collection": "shipment",
         "indexes": [
-            {"fields": ["checkout"], "unique": True, "name": "idx_shipment_checkout"},
+            {"fields": ["checkout"], "name": "idx_shipment_checkout"},
+            # Enforce at most one non-cancelled shipment per checkout,
+            # while allowing multiple cancelled shipments as history.
+            {
+                "fields": ["checkout"],
+                "unique": True,
+                "name": "idx_shipment_checkout_active_unique",
+                "partialFilterExpression": {"status": {"$ne": "cancelled"}},
+            },
             {"fields": ["status", "-created_at"], "name": "idx_shipment_status_created"},
         ],
     }

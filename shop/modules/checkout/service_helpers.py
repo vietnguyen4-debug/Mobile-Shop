@@ -11,7 +11,7 @@ from ..cart.repositories import (
     cart_get_active_by_user,
     cart_save,
 )
-from ..payment.repositories import payment_list_by_checkout
+from ..payment.repositories import payment_list_by_checkout, payment_save
 from ..shipment.repositories import shipment_get_by_checkout, shipment_save
 from ..users.models import Address, User
 from .models import Checkout
@@ -191,6 +191,26 @@ def _collect_related_documents(checkout: Checkout):
     shipment = shipment_get_by_checkout(checkout)
     payments = payment_list_by_checkout(checkout)
     return shipment, payments
+
+
+def _cancel_pending_payments(payments) -> int:
+    """
+    Cancel any non-completed payments (pending) to keep checkout cancellation consistent.
+    Returns number of payments cancelled.
+    """
+    cancelled = 0
+    for payment in payments or []:
+        status = getattr(payment, "status", None)
+        if status == "pending":
+            payment.status = "cancelled"
+            try:
+                payment_save(payment)
+                cancelled += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                raise AppError(
+                    f"Failed to cancel payment: {str(exc)}", 500, name="DATABASE_ERROR"
+                )
+    return cancelled
 
 def _get_default_user_address(user: Optional[User]) -> Optional[Address]:
     if not user:

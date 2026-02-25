@@ -78,6 +78,12 @@ class Product(Document, AuditMixin):
             {"fields": ["is_active","is_orphan"]},
             {"fields": ["category","subcategory"]},
             {"fields": ["name"]},
+            # Common list filters + sorts
+            {"fields": ["category", "-created_at"], "name": "idx_product_category_created"},
+            {"fields": ["subcategory", "-created_at"], "name": "idx_product_subcategory_created"},
+            {"fields": ["category", "-price", "-created_at"], "name": "idx_product_category_price_created"},
+            {"fields": ["subcategory", "-price", "-created_at"], "name": "idx_product_subcategory_price_created"},
+            {"fields": ["is_active", "is_orphan", "-created_at"], "name": "idx_product_active_orphan_created"},
         ]
     }
 
@@ -93,6 +99,5 @@ class ProductKeyword(Document, AuditMixin):
             {"fields": ["keyword", "-weight"]}
         ]
     }
-
 
 

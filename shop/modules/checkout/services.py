@@ -17,6 +17,7 @@ from .service_helpers import (
     _parse_customer,
     _store_checkout,
     _update_shipment_status,
+    _cancel_pending_payments,
     _build_virtual_shipment_snapshot
 )
 
@@ -174,10 +175,12 @@ def s_cancel_checkout(
             raise AppError(
                 "Cannot cancel a completed checkout", 400, name="CHECKOUT_COMPLETED"
             )
-        if status == "cancelled":
-            return _build_snapshot(checkout)
-
         shipment_doc, payment_docs = _collect_related_documents(checkout)
+        if status == "cancelled":
+            # Ensure related docs are also cancelled (idempotent).
+            _update_shipment_status(shipment_doc, status="cancelled")
+            _cancel_pending_payments(payment_docs)
+            return _build_snapshot(checkout)
 
         # Disallow cancel if any payment is completed to avoid abuse.
         if any(getattr(payment, "status", None) == "completed" for payment in payment_docs):
@@ -196,6 +199,7 @@ def s_cancel_checkout(
             )
 
         _update_shipment_status(shipment_doc, status="cancelled")
+        _cancel_pending_payments(payment_docs)
 
         checkout.status = "cancelled"
         checkout.user = user or checkout.user

@@ -8,7 +8,8 @@ services:
       # override broker/backend sang service redis nội bộ
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      # giữ CACHE_REDIS_URL theo .env (cloud)
+      # Use local redis for cache to reduce latency in dev
+      CACHE_REDIS_URL: redis://redis:6379/2
     volumes:
       - .:/app
     depends_on:
@@ -23,6 +24,7 @@ services:
       TZ: Asia/Ho_Chi_Minh
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CACHE_REDIS_URL: redis://redis:6379/2
     volumes:
       - .:/app
     depends_on:
@@ -36,6 +38,7 @@ services:
       TZ: Asia/Ho_Chi_Minh
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CACHE_REDIS_URL: redis://redis:6379/2
     volumes:
       - .:/app
     depends_on:

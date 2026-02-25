@@ -5,9 +5,9 @@ import logging
 from .service_helpers import (
     _parse_amount,
     _normalize_currency,
-    _parse_paid_at,
     _build_vnpay_payment_url,
     _vnpay_hash,
+    vnpay_querydr,
 )
 from ...core.validation import require_fields
 from .repositories import *
@@ -20,7 +20,10 @@ from ...core.utils import (
     sanitize_session_id,
 )
 from ..checkout.repositories import checkout_save
+from ..shipment.repositories import shipment_create, shipment_get_by_checkout
 from datetime import datetime, timezone
+from datetime import timedelta
+from ...core.celery_client import enqueue_task
 
 
 _vnp_logger = logging.getLogger("shop.payment.vnpay")
@@ -43,6 +46,43 @@ def _cancel_other_pending_payments(current_payment):
                 payment_save(other)
     except Exception:
         # Defensive: do not fail main payment flow if cleanup fails.
+        pass
+
+
+def _is_guest_user(user) -> bool:
+    if not user:
+        return False
+    username = getattr(user, "username", "") or ""
+    email = getattr(user, "email", "") or ""
+    return username.startswith("guest_") and email.endswith("@guest.local")
+
+
+def _ensure_pending_shipment_for_checkout(checkout) -> None:
+    """
+    Ensure a Shipment exists for the checkout, defaulting to status=pending.
+    Used when payment completes so shipping can be managed by admin.
+    """
+    if not checkout:
+        return
+    if shipment_get_by_checkout(checkout):
+        return
+
+    user = getattr(checkout, "user", None)
+    session_id = getattr(checkout, "session_id", None)
+    source = "guest" if (session_id or _is_guest_user(user)) else "user"
+    try:
+        shipment_create(
+            {
+                "checkout": checkout,
+                "user": user,
+                "session_id": session_id,
+                "source": source,
+                "status": "pending",
+                "address": None,
+            }
+        )
+    except Exception:
+        # Duplicate key/race: another worker created it.
         pass
 
 def _create_payment(user_id: str | None, payload: dict, *, method: str, require_access: bool) -> dict:
@@ -106,11 +146,6 @@ def _create_payment(user_id: str | None, payload: dict, *, method: str, require_
         )
 
 
-def s_create_offline_payment(user_id: str | None, payload: dict) -> dict:
-    # Admin-only route uses this; no checkout access enforcement.
-    return _create_payment(user_id, payload, method="offline", require_access=False)
-
-
 def s_create_online_payment(user_id: str | None, payload: dict) -> dict:
     # User-facing; ensure session/user can access checkout and force amount = outstanding.
     require_fields(payload, "checkout_id")
@@ -139,12 +174,16 @@ def s_create_online_payment(user_id: str | None, payload: dict) -> dict:
         )
 
     provider = payload.get("provider")
+    provider_value = str(provider).strip().lower() if provider is not None else "vnpay"
+    if provider_value != "vnpay":
+        raise AppError("Unsupported online payment provider", 400, name="UNSUPPORTED_PROVIDER")
     note = payload.get("note")
+    ip_addr = payload.get("ip_addr")
 
     data = {
         "checkout_id": str(checkout.id),
         "session_id": session_id,
-        "provider": provider,
+        "provider": provider_value,
         "note": note,
         "_amount_override": outstanding,
     }
@@ -152,43 +191,51 @@ def s_create_online_payment(user_id: str | None, payload: dict) -> dict:
     data["currency"] = getattr(checkout, "currency", "VND")
 
     payment = _create_payment(user_id, data, method="online", require_access=False)
-    payment_url = _build_vnpay_payment_url(payment)
-    if payment_url:
+    built = _build_vnpay_payment_url(payment, ip_addr=str(ip_addr) if ip_addr else None)
+    if built:
+        payment_url, create_date = built
         payment["payment_url"] = payment_url
+        # Persist vnp_CreateDate so QueryDR can use the exact transaction date.
+        try:
+            payment_doc = payment_get_by_id(payment.get("id"))
+            if payment_doc:
+                payment_doc.provider_create_date = create_date
+                payment_save(payment_doc)
+        except Exception:
+            pass
     return payment
 
 
-def s_complete_payment(payment_id: str, payload: Optional[dict]) -> dict:
-    payload = payload or {}
-    try:
-        payment = payment_get_by_id(payment_id)
-        if not payment:
-            raise AppError("Payment not found", 404, name="PAYMENT_NOT_FOUND")
+def s_inspect_vnpay_return(params: Optional[dict]) -> dict:
+    """
+    Inspect VNPAY return params for UI/debugging without mutating payment state.
+    """
+    params = dict(params or {})
+    txn_ref = str(params.get("vnp_TxnRef") or "")
+    rsp_code = str(params.get("vnp_ResponseCode") or "")
+    txn_status = str(params.get("vnp_TransactionStatus") or "")
 
-        note = payload.get("note")
-        if note is not None and not isinstance(note, str):
-            raise AppError("Note must be a string", 400, name="INVALID_NOTE")
+    signature_valid = None
+    secret = os.environ.get("VNPAY_SECRET_KEY", "")
+    received_hash = (params.get("vnp_SecureHash") or "").upper()
+    if secret and received_hash:
+        try:
+            signature_valid = received_hash == _vnpay_hash(params, secret)
+        except Exception:
+            signature_valid = False
 
-        if payment.status == "completed":
-            if note is not None:
-                payment.note = note.strip() or None
-                payment = payment_save(payment)
-            return payment_public(payment)
+    payment = payment_get_by_provider_ref(txn_ref) if txn_ref else None
+    checkout = getattr(payment, "checkout", None) if payment else None
 
-        payment.status = "completed"
-        payment.paid_at = _parse_paid_at(payload.get("paid_at"))
-        if note is not None:
-            payment.note = note.strip() or None
-        provider_ref = payload.get("provider_ref")
-        if provider_ref is not None:
-            payment.provider_ref = provider_ref.strip() or None
-        payment = payment_save(payment)
-        _cancel_other_pending_payments(payment)
-        return payment_public(payment)
-    except AppError:
-        raise
-    except Exception as exc:
-        raise AppError(f"Failed to complete payment: {str(exc)}", 500, name="DATABASE_ERROR")
+    return {
+        "txn_ref": txn_ref,
+        "response_code": rsp_code,
+        "transaction_status": txn_status,
+        "signature_valid": signature_valid,
+        "payment_id": str(getattr(payment, "id", "")) if payment else "",
+        "checkout_id": str(getattr(checkout, "id", "")) if checkout else "",
+        "payment_status": str(getattr(payment, "status", "")) if payment else "",
+    }
 
 
 def s_handle_vnpay_webhook(params: dict):
@@ -203,6 +250,18 @@ def s_handle_vnpay_webhook(params: dict):
     # Debug log all incoming params to help diagnose response codes.
     _vnp_logger.info("VNPAY webhook received", extra={"params": dict(params)})
 
+    # Basic required params: prevent accidentally treating a "pay" URL as an IPN/Return callback.
+    txn_ref = params.get("vnp_TxnRef")
+    amount_param = params.get("vnp_Amount")
+    rsp_code = params.get("vnp_ResponseCode")
+    missing = [k for k, v in (("vnp_TxnRef", txn_ref), ("vnp_Amount", amount_param), ("vnp_ResponseCode", rsp_code)) if not v]
+    if missing:
+        _vnp_logger.warning(
+            "VNPAY webhook missing required params",
+            extra={"missing": missing, "txn_ref": txn_ref},
+        )
+        return ({"RspCode": "99", "Message": "Missing required params"}, 200)
+
     received_hash = (params.get("vnp_SecureHash") or "").upper()
     expected_hash = _vnpay_hash(params, secret)
     _vnp_logger.debug(
@@ -216,15 +275,17 @@ def s_handle_vnpay_webhook(params: dict):
         )
         return ({"RspCode": "97", "Message": "Invalid signature"}, 200)
 
-    txn_ref = params.get("vnp_TxnRef")
-    amount_param = params.get("vnp_Amount")
     pay_date = params.get("vnp_PayDate")
-    rsp_code = params.get("vnp_ResponseCode")
+    txn_no = params.get("vnp_TransactionNo")
+    txn_status = params.get("vnp_TransactionStatus")
+    bank_code = params.get("vnp_BankCode")
+    bank_tran_no = params.get("vnp_BankTranNo")
+    card_type = params.get("vnp_CardType")
 
     payment = payment_get_by_provider_ref(txn_ref)
-    if not payment or getattr(payment, "status", None) == "cancelled":
+    if not payment:
         _vnp_logger.warning(
-            "VNPAY webhook payment not found or cancelled",
+            "VNPAY webhook payment not found",
             extra={"txn_ref": txn_ref, "rsp_code": rsp_code},
         )
         return ({"RspCode": "01", "Message": "Order not found"}, 200)
@@ -251,8 +312,70 @@ def s_handle_vnpay_webhook(params: dict):
         )
         return ({"RspCode": "04", "Message": "Invalid amount"}, 200)
 
+    is_success = (rsp_code == "00") and (txn_status in (None, "", "00"))
+
+    # Only mark payment completed when VNPAY reports success.
+    if not is_success:
+        if getattr(payment, "status", None) == "completed":
+            _vnp_logger.info(
+                "VNPAY webhook already completed payment received non-success callback",
+                extra={"txn_ref": txn_ref, "rsp_code": rsp_code, "txn_status": txn_status},
+            )
+            return ({"RspCode": "02", "Message": "Order already confirmed"}, 200)
+        if getattr(payment, "status", None) != "completed":
+            try:
+                payment.provider_rsp_code = rsp_code
+                if txn_no:
+                    payment.provider_txn_no = str(txn_no)
+                if bank_code:
+                    payment.provider_bank_code = str(bank_code)
+                if bank_tran_no:
+                    payment.provider_bank_tran_no = str(bank_tran_no)
+                if card_type:
+                    payment.provider_card_type = str(card_type)
+                if pay_date:
+                    payment.provider_pay_date = str(pay_date)
+                if getattr(payment, "status", None) != "cancelled":
+                    payment.status = "cancelled"
+                payment_save(payment)
+            except Exception:
+                _vnp_logger.exception(
+                    "VNPAY webhook failed to mark payment cancelled",
+                    extra={"txn_ref": txn_ref, "rsp_code": rsp_code},
+                )
+        _vnp_logger.info(
+            "VNPAY webhook non-success response",
+            extra={"txn_ref": txn_ref, "rsp_code": rsp_code, "txn_status": txn_status},
+        )
+        # Acknowledge IPN receipt after persisting failure/cancel state.
+        return ({"RspCode": "00", "Message": "OK"}, 200)
+
+    if payment.status == "completed":
+        _vnp_logger.info(
+            "VNPAY webhook duplicate success callback",
+            extra={"txn_ref": txn_ref, "rsp_code": rsp_code, "txn_status": txn_status},
+        )
+        return ({"RspCode": "02", "Message": "Order already confirmed"}, 200)
+
+    if getattr(payment, "status", None) == "cancelled":
+        _vnp_logger.warning(
+            "VNPAY webhook success received for locally cancelled payment; recovering to completed",
+            extra={"txn_ref": txn_ref},
+        )
+
     if payment.status != "completed":
         payment.status = "completed"
+        payment.provider_rsp_code = rsp_code or "00"
+        if txn_no:
+            payment.provider_txn_no = str(txn_no)
+        if bank_code:
+            payment.provider_bank_code = str(bank_code)
+        if bank_tran_no:
+            payment.provider_bank_tran_no = str(bank_tran_no)
+        if card_type:
+            payment.provider_card_type = str(card_type)
+        if pay_date:
+            payment.provider_pay_date = str(pay_date)
         if pay_date:
             try:
                 payment.paid_at = datetime.strptime(pay_date, "%Y%m%d%H%M%S").replace(
@@ -266,6 +389,14 @@ def s_handle_vnpay_webhook(params: dict):
         payment.provider_ref = txn_ref
         payment_save(payment)
 
+        try:
+            _ensure_pending_shipment_for_checkout(getattr(payment, "checkout", None))
+        except Exception:
+            _vnp_logger.exception(
+                "VNPAY webhook failed to ensure pending shipment",
+                extra={"txn_ref": txn_ref, "payment_id": str(getattr(payment, "id", ""))},
+            )
+
         _cancel_other_pending_payments(payment)
         _vnp_logger.info(
             "VNPAY payment marked completed",
@@ -274,18 +405,137 @@ def s_handle_vnpay_webhook(params: dict):
                 "txn_ref": txn_ref,
                 "amount": amount,
                 "rsp_code": rsp_code,
+                "txn_status": txn_status,
                 "pay_date": pay_date,
             },
         )
+        try:
+            enqueue_task("tasks.on_payment_completed", args=[str(getattr(payment, "id", ""))])
+        except Exception:
+            pass
 
-    # If vnp_ResponseCode is provided, echo it back for debugging; otherwise return 00.
-    rsp_code = rsp_code or "00"
-    message = "OK" if rsp_code == "00" else f"VNPAY ResponseCode={rsp_code}"
+    # Respond using merchant IPN acknowledgement codes, not provider response codes.
+    rsp_code = "00"
+    message = "OK"
     _vnp_logger.info(
         "VNPAY webhook response",
         extra={"RspCode": rsp_code, "Message": message, "txn_ref": txn_ref},
     )
     return ({"RspCode": rsp_code, "Message": message}, 200)
+
+
+def _vnpay_transaction_date_from_payment(payment) -> str:
+    created_at = getattr(payment, "created_at", None)
+    if not isinstance(created_at, datetime):
+        created_at = datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    tz = timezone(timedelta(hours=7))
+    return created_at.astimezone(tz).strftime("%Y%m%d%H%M%S")
+
+
+def s_admin_query_vnpay(payment_id: str, payload: Optional[dict] = None) -> dict:
+    """
+    Admin helper to query VNPAY for a transaction result (QueryDR) and
+    optionally update local payment status/metadata.
+    """
+    payload = payload or {}
+    payment = payment_get_by_id(payment_id)
+    if not payment:
+        raise AppError("Payment not found", 404, name="PAYMENT_NOT_FOUND")
+    if getattr(payment, "provider", None) != "vnpay":
+        raise AppError("Payment provider is not VNPAY", 400, name="INVALID_PROVIDER")
+
+    txn_ref = getattr(payment, "provider_ref", None) or str(getattr(payment, "id", ""))
+    transaction_date = payload.get("transaction_date") or getattr(payment, "provider_create_date", None) or _vnpay_transaction_date_from_payment(payment)
+    order_info = payload.get("order_info") or f"Query payment {str(getattr(payment, 'id', ''))}"
+    ip_addr = payload.get("ip_addr") or "127.0.0.1"
+
+    resp = vnpay_querydr(
+        txn_ref=str(txn_ref),
+        transaction_date=str(transaction_date),
+        order_info=str(order_info),
+        ip_addr=str(ip_addr),
+    )
+
+    # Persist some provider metadata for debugging/audit.
+    payment.provider_rsp_code = resp.get("vnp_ResponseCode") or getattr(payment, "provider_rsp_code", None)
+    payment.provider_txn_no = resp.get("vnp_TransactionNo") or getattr(payment, "provider_txn_no", None)
+    payment.provider_bank_code = resp.get("vnp_BankCode") or getattr(payment, "provider_bank_code", None)
+    payment.provider_bank_tran_no = resp.get("vnp_BankTranNo") or getattr(payment, "provider_bank_tran_no", None)
+    payment.provider_card_type = resp.get("vnp_CardType") or getattr(payment, "provider_card_type", None)
+    payment.provider_pay_date = resp.get("vnp_PayDate") or getattr(payment, "provider_pay_date", None)
+
+    rsp_code = resp.get("vnp_ResponseCode")
+    txn_status = resp.get("vnp_TransactionStatus")
+    pay_date = resp.get("vnp_PayDate")
+
+    # Update local status if VNPAY confirms success.
+    if rsp_code == "00" and (txn_status in (None, "", "00")):
+        if getattr(payment, "status", None) != "completed":
+            payment.status = "completed"
+            if pay_date:
+                try:
+                    payment.paid_at = datetime.strptime(pay_date, "%Y%m%d%H%M%S").replace(
+                        tzinfo=timezone.utc
+                    )
+                except Exception:
+                    payment.paid_at = datetime.now(timezone.utc)
+            else:
+                payment.paid_at = datetime.now(timezone.utc)
+            payment_save(payment)
+            try:
+                _ensure_pending_shipment_for_checkout(getattr(payment, "checkout", None))
+            except Exception:
+                _vnp_logger.exception(
+                    "VNPAY QueryDR failed to ensure pending shipment",
+                    extra={"txn_ref": txn_ref, "payment_id": str(getattr(payment, "id", ""))},
+                )
+            _cancel_other_pending_payments(payment)
+            try:
+                enqueue_task("tasks.on_payment_completed", args=[str(getattr(payment, "id", ""))])
+            except Exception:
+                pass
+    else:
+        payment_save(payment)
+
+    return {
+        "payment": payment_public(payment),
+        "vnpay": resp,
+    }
+
+
+def s_reconcile_pending_vnpay_payments(
+    *,
+    limit: int = 100,
+    min_age_seconds: int = 300,
+) -> dict:
+    """
+    Best-effort reconciliation for pending VNPAY payments using QueryDR.
+    Useful when IPN/return was missed.
+    """
+    now = datetime.now(timezone.utc)
+    before = now - timedelta(seconds=int(min_age_seconds))
+    pending = payment_list_pending_vnpay(before=before, limit=int(limit))
+
+    checked = 0
+    completed = 0
+    errors = 0
+
+    for p in pending:
+        checked += 1
+        try:
+            result = s_admin_query_vnpay(str(getattr(p, "id", "")), {})
+            if (result.get("payment") or {}).get("status") == "completed":
+                completed += 1
+        except Exception:
+            errors += 1
+            _vnp_logger.exception(
+                "VNPAY reconcile failed",
+                extra={"payment_id": str(getattr(p, "id", "")), "txn_ref": getattr(p, "provider_ref", None)},
+            )
+
+    return {"checked": checked, "completed": completed, "errors": errors}
 
 
 def s_get_payment(payment_id: str, user_id: Optional[str], session_id: Optional[str]) -> dict:

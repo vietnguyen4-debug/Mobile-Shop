@@ -7,7 +7,7 @@ class Payment(Document, AuditMixin):
     checkout = ReferenceField("Checkout", required=True)
     user = ReferenceField("User", required=False, null=True)
     session_id = StringField(required=False, max_length=120)
-    method = StringField(required=True, default="offline", choices=("offline", "online"))
+    method = StringField(required=True, default="online", choices=("online",))
     provider = StringField(required=False, max_length=50)
     provider_ref = StringField(required=False, max_length=120)
     amount = FloatField(required=True, min_value=0)
@@ -16,6 +16,15 @@ class Payment(Document, AuditMixin):
         default="pending",
         choices=("pending", "completed", "cancelled"),
     )
+    # Provider result metadata (optional)
+    provider_rsp_code = StringField(required=False, max_length=10)
+    provider_txn_no = StringField(required=False, max_length=50)
+    provider_bank_code = StringField(required=False, max_length=20)
+    provider_bank_tran_no = StringField(required=False, max_length=50)
+    provider_card_type = StringField(required=False, max_length=20)
+    # VNPAY uses YYYYMMDDHHMMSS for CreateDate/TransactionDate.
+    provider_create_date = StringField(required=False, max_length=20)
+    provider_pay_date = StringField(required=False, max_length=20)
     note = StringField()
     paid_at = DateTimeField()
 

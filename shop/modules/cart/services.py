@@ -6,6 +6,7 @@ from .mappers import cart_public
 from .service_helpers import (
     build_identity,
     ensure_cart,
+    get_cart,
     find_item_by_id,
     load_product,
     merge_carts,
@@ -13,8 +14,8 @@ from .service_helpers import (
     remove_item,
     set_item_quantity,
     upsert_item,
-    get_cart,
 )
+
 
 def s_get_cart(user_id: str | None, session_id: str | None) -> dict:
     generate_session_id: str | None = None

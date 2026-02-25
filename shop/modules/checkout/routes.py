@@ -15,17 +15,17 @@ SESSION_COOKIE_NAME = "session_id"
 
 
 def _extract_session_id() -> str | None:
-    cookie_candidate = sanitize_session_id(request.cookies.get(SESSION_COOKIE_NAME))
-    if cookie_candidate:
-        return cookie_candidate
+    header_candidate = sanitize_session_id(request.headers.get("X-Session-Id"))
+    if header_candidate:
+        return header_candidate
 
     query_candidate = sanitize_session_id(request.args.get("session_id", type=str))
     if query_candidate:
         return query_candidate
 
-    header_candidate = sanitize_session_id(request.headers.get("X-Session-Id"))
-    if header_candidate:
-        return header_candidate
+    cookie_candidate = sanitize_session_id(request.cookies.get(SESSION_COOKIE_NAME))
+    if cookie_candidate:
+        return cookie_candidate
 
     return None
 

@@ -87,7 +87,14 @@ def prod_list_all(
         t1 = time.perf_counter()
         tracker.mark("count")
 
-        items = list(qs.order_by(*order_fields).skip((page-1)*limit).limit(limit))
+        # Fetch only fields needed for product_summary to reduce payload size.
+        # This avoids pulling large descriptions/specs on list endpoints.
+        items = list(
+            qs.order_by(*order_fields)
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .only("name", "slug", "price", "media", "created_at", "updated_at")
+        )
         t2 = time.perf_counter()
         tracker.mark("fetch")
 
@@ -116,7 +123,12 @@ def prod_search_by_name(keyword: str, page: int, limit: int, *, active_only=True
         qs = qs.filter(is_active=True, is_orphan=False)
 
     total = qs.count()
-    items = list(qs.order_by("-created_at").skip((page - 1) * limit).limit(limit))
+    items = list(
+        qs.order_by("-created_at")
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .only("name", "slug", "price", "media", "created_at", "updated_at")
+    )
     return items, total
 
 def prod_insert(data: dict) -> Product:
@@ -310,4 +322,3 @@ def pk_suggest(keyword: str, limit: int = 20) -> list[ProductKeyword]:
             out.append(rec)
         if len(out) >= limit: break
     return out
-

@@ -1,7 +1,15 @@
 from ...core.validation import require_fields
 from .mappers import shipment_public
 from .repositories import *
-from .service_helpers import  _normalize_note, _normalize_recipient_name, _normalize_recipient_phone, _resolve_address
+from .service_helpers import (
+    _normalize_note,
+    _normalize_recipient_name,
+    _normalize_recipient_phone,
+    _resolve_address,
+    _ensure_checkout_paid,
+    _validate_shipment_status,
+    _ensure_valid_shipment_transition,
+)
 from ...core.utils import *
 
 def s_assign_shipment(user_id: Optional[str], payload: dict) -> dict:
@@ -156,34 +164,37 @@ def s_get_shipment_for_checkout(
             f"Failed to retrieve shipment: {str(exc)}", 500, name="DATABASE_ERROR"
         )
 
-def s_complete_shipment(shipment_id: str) -> dict:
+def s_admin_update_shipment_status(shipment_id: str, payload: dict) -> dict:
+    """
+    Admin-only shipment status update.
+    Requires at least one completed payment for the shipment's checkout (except cancelling).
+    """
+    payload = payload or {}
+    require_fields(payload, "status")
     try:
         shipment = shipment_get_by_id(shipment_id)
         if not shipment:
             raise AppError("Shipment not found", 404, name="SHIPMENT_NOT_FOUND")
 
-        status = getattr(shipment, "status", None) or "pending"
-        if status == "delivered":
+        target = _validate_shipment_status(payload.get("status"))
+        current = getattr(shipment, "status", None) or "pending"
+        if target == current:
             return shipment_public(shipment)
-        if status == "cancelled":
-            raise AppError(
-                "Cannot complete a cancelled shipment",
-                400,
-                name="SHIPMENT_CANCELLED",
-            )
-        if status not in ("processing", "shipped"):
-            raise AppError(
-                "Shipment must be processing or shipped before completion",
-                400,
-                name="SHIPMENT_NOT_READY",
-            )
 
-        shipment.status = "delivered"
+        checkout = getattr(shipment, "checkout", None)
+        if target != "cancelled" and checkout:
+            _ensure_checkout_paid(checkout)
+        elif target != "cancelled" and not checkout:
+            raise AppError("Shipment checkout not found", 400, name="CHECKOUT_NOT_FOUND")
+
+        _ensure_valid_shipment_transition(current, target)
+
+        shipment.status = target
         shipment = shipment_save(shipment)
         return shipment_public(shipment)
     except AppError:
         raise
     except Exception as exc:  # pragma: no cover - defensive
         raise AppError(
-            f"Failed to complete shipment: {str(exc)}", 500, name="DATABASE_ERROR"
+            f"Failed to update shipment status: {str(exc)}", 500, name="DATABASE_ERROR"
         )

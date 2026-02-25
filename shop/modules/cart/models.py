@@ -9,6 +9,7 @@ from mongoengine import (
     ReferenceField,
     StringField,
     IntField,
+    DateTimeField,
     ValidationError,
 )
 
@@ -28,6 +29,7 @@ class Cart(Document, AuditMixin):
         default="active",
         choices=("active", "merged", "converted"),
     )
+    guest_expires_at = DateTimeField(required=False, null=True)
     items = EmbeddedDocumentListField(CartItem, default=list)
 
     meta = {
@@ -36,6 +38,7 @@ class Cart(Document, AuditMixin):
             {"fields": ["user", "session_id"]},
             {"fields": ["status"]},
             {"fields": ["-created_at"]},
+            {"fields": ["guest_expires_at"]},
         ]
     }
 
