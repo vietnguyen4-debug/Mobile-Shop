@@ -147,6 +147,14 @@ def r_vnpay_return():
         return redirect(target, code=302)
 
     html = (
+        "<!doctype html>"
+        "<html lang='vi'>"
+        "<head>"
+        "<meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Payment processed</title>"
+        "</head>"
+        "<body>"
         "<h1>Payment processed</h1>"
         f"<p>{message}</p>"
         "<p>(Trang này chỉ dùng tạm cho môi trường sandbox; "
@@ -156,5 +164,7 @@ def r_vnpay_return():
         f"<p><strong>vnp_TransactionStatus:</strong> {txn_status}</p>"
         f"<p><strong>signature_valid:</strong> {signature_valid}</p>"
         f"<p><strong>local_payment_status:</strong> {payment_status}</p>"
+        "</body>"
+        "</html>"
     )
-    return html, 200, {"Content-Type": "text/html"}
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
