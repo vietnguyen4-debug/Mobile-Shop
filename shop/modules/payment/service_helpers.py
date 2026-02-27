@@ -75,6 +75,40 @@ def _vnpay_api_hash_pipe(values: list[str], secret: str) -> str:
     raw = "|".join(values)
     return hmac.new(secret.encode(), raw.encode(), hashlib.sha512).hexdigest().upper()
 
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def is_vnpay_success(rsp_code: str | None, txn_status: str | None) -> bool:
+    return (rsp_code == "00") and (txn_status in (None, "", "00"))
+
+
+def payment_created_at_utc(payment: Any) -> datetime:
+    created_at = getattr(payment, "created_at", None)
+    if not isinstance(created_at, datetime):
+        created_at = datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return created_at.astimezone(timezone.utc)
+
+
+def vnpay_pending_timeout_seconds() -> int:
+    expire_minutes = _env_int("VNPAY_EXPIRE_MINUTES", 15)
+    grace_seconds = _env_int("VNPAY_PENDING_GRACE_SECONDS", 120)
+    return max(60, (int(expire_minutes) * 60) + int(grace_seconds))
+
+
+def vnpay_on_demand_querydr_min_age_seconds() -> int:
+    return max(0, _env_int("VNPAY_ON_DEMAND_QUERYDR_MIN_AGE_SECONDS", 30))
+
+
 def vnpay_querydr(
     *,
     txn_ref: str,

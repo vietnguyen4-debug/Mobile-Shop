@@ -112,28 +112,37 @@ def r_vnpay_return():
     payment_id = inspected.get("payment_id") or ""
     checkout_id = inspected.get("checkout_id") or ""
     payment_status = inspected.get("payment_status") or ""
-    message = (
-        "Chu ky callback khong hop le."
-        if signature_valid is False
-        else (
-            "Thanh toan thanh cong (dang cho he thong xac nhan)."
-            if (rsp_code == "00" and txn_status in ("", "00"))
-            else "Thanh toan that bai hoac dang cho xu ly."
-        )
-    )
+    gateway_success = (rsp_code == "00" and txn_status in ("", "00"))
+    if signature_valid is False:
+        ux_status = "invalid_signature"
+    elif gateway_success:
+        if payment_status == "completed":
+            ux_status = "success"
+        elif payment_status == "cancelled":
+            ux_status = "failed"
+        else:
+            ux_status = "confirming"
+    else:
+        ux_status = "failed" if rsp_code else "unknown"
+
+    status_message = {
+        "invalid_signature": "Chữ ký callback không hợp lệ.",
+        "success": "Thanh toán thành công.",
+        "confirming": "Thanh toán thành công, hệ thống đang xác nhận.",
+        "failed": "Thanh toán thất bại hoặc đã bị hủy.",
+        "unknown": "Chưa xác định được kết quả giao dịch.",
+    }
+    message = status_message.get(ux_status, status_message["unknown"])
 
     # If a frontend redirect URL is configured, redirect the browser there with minimal context.
     # The frontend should call the backend to confirm the final payment status.
     redirect_base = os.environ.get("VNPAY_RETURN_REDIRECT_URL")
     if redirect_base:
-        status = "success" if (rsp_code == "00" and txn_status in ("", "00")) else ("failed" if rsp_code else "unknown")
-        if signature_valid is False:
-            status = "invalid_signature"
         split = urlsplit(redirect_base)
         qs = dict(parse_qsl(split.query, keep_blank_values=True))
         qs.update(
             {
-                "status": status,
+                "status": ux_status,
                 "payment_id": payment_id,
                 "checkout_id": checkout_id,
                 "payment_status": payment_status,
@@ -162,6 +171,7 @@ def r_vnpay_return():
         f"<p><strong>vnp_TxnRef:</strong> {txn_ref}</p>"
         f"<p><strong>vnp_ResponseCode:</strong> {rsp_code}</p>"
         f"<p><strong>vnp_TransactionStatus:</strong> {txn_status}</p>"
+        f"<p><strong>status:</strong> {ux_status}</p>"
         f"<p><strong>signature_valid:</strong> {signature_valid}</p>"
         f"<p><strong>local_payment_status:</strong> {payment_status}</p>"
         "</body>"

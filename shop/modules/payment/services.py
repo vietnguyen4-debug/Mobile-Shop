@@ -7,6 +7,10 @@ from .service_helpers import (
     _normalize_currency,
     _build_vnpay_payment_url,
     _vnpay_hash,
+    is_vnpay_success,
+    payment_created_at_utc,
+    vnpay_pending_timeout_seconds,
+    vnpay_on_demand_querydr_min_age_seconds,
     vnpay_querydr,
 )
 from ...core.validation import require_fields
@@ -85,6 +89,78 @@ def _ensure_pending_shipment_for_checkout(checkout) -> None:
         # Duplicate key/race: another worker created it.
         pass
 
+
+def _cancel_stale_pending_online_payments(checkout) -> int:
+    """
+    Cancel stale pending online payments that are older than VNPAY expire time + grace.
+    This prevents users from being blocked by PAYMENT_PENDING_EXISTS forever
+    when they abandoned the gateway flow.
+    """
+    now = datetime.now(timezone.utc)
+    timeout_seconds = vnpay_pending_timeout_seconds()
+    cancelled = 0
+
+    for p in payment_list_by_checkout(checkout):
+        if getattr(p, "status", None) != "pending" or getattr(p, "method", None) != "online":
+            continue
+        created_at = payment_created_at_utc(p)
+        age_seconds = (now - created_at).total_seconds()
+        if age_seconds < timeout_seconds:
+            continue
+        try:
+            p.status = "cancelled"
+            if not getattr(p, "provider_rsp_code", None):
+                p.provider_rsp_code = "EXPIRED_LOCAL"
+            payment_save(p)
+            cancelled += 1
+            _vnp_logger.info(
+                "Cancelled stale pending online payment",
+                extra={
+                    "payment_id": str(getattr(p, "id", "")),
+                    "checkout_id": str(getattr(checkout, "id", "")),
+                    "age_seconds": int(age_seconds),
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+        except Exception:
+            _vnp_logger.exception(
+                "Failed to cancel stale pending online payment",
+                extra={"payment_id": str(getattr(p, "id", ""))},
+            )
+    return cancelled
+
+
+def _reconcile_pending_vnpay_on_demand(checkout, *, min_age_seconds: int) -> int:
+    """
+    Best-effort QueryDR for pending VNPAY payments during create-online flow.
+    Helps recover from missed IPN without requiring beat/worker.
+    """
+    now = datetime.now(timezone.utc)
+    resolved = 0
+    for p in payment_list_by_checkout(checkout):
+        if getattr(p, "status", None) != "pending":
+            continue
+        if getattr(p, "method", None) != "online" or getattr(p, "provider", None) != "vnpay":
+            continue
+        created_at = payment_created_at_utc(p)
+        age_seconds = (now - created_at).total_seconds()
+        if age_seconds < int(min_age_seconds):
+            continue
+        try:
+            result = s_admin_query_vnpay(str(getattr(p, "id", "")), {})
+            status = (result.get("payment") or {}).get("status")
+            if status and status != "pending":
+                resolved += 1
+        except Exception:
+            _vnp_logger.exception(
+                "On-demand QueryDR failed",
+                extra={
+                    "payment_id": str(getattr(p, "id", "")),
+                    "checkout_id": str(getattr(checkout, "id", "")),
+                },
+            )
+    return resolved
+
 def _create_payment(user_id: str | None, payload: dict, *, method: str, require_access: bool) -> dict:
     amount_override = payload.pop("_amount_override", None)
     if amount_override is None:
@@ -155,11 +231,24 @@ def s_create_online_payment(user_id: str | None, payload: dict) -> dict:
     ensure_checkout_access(checkout, user, session_id)
 
     payments = payment_list_by_checkout(checkout)
+    stale_cancelled = _cancel_stale_pending_online_payments(checkout)
+    if stale_cancelled:
+        payments = payment_list_by_checkout(checkout)
     completed_total = sum(float(getattr(p, "amount", 0) or 0) for p in payments if getattr(p, "status", None) == "completed")
     total_amount = float(getattr(checkout, "total_amount", 0) or 0)
     outstanding = max(total_amount - completed_total, 0.0)
     if outstanding <= 0:
         raise AppError("Checkout already paid", 400, name="CHECKOUT_PAID")
+
+    # Try best-effort reconciliation (QueryDR) for unresolved pending VNPAY before blocking.
+    on_demand_min_age = vnpay_on_demand_querydr_min_age_seconds()
+    if any(
+        getattr(p, "status", None) == "pending"
+        and getattr(p, "method", None) == "online"
+        for p in payments
+    ):
+        _reconcile_pending_vnpay_on_demand(checkout, min_age_seconds=on_demand_min_age)
+        payments = payment_list_by_checkout(checkout)
 
     # Prevent multiple online payments pending at the same time to avoid overpay.
     if any(
@@ -312,7 +401,7 @@ def s_handle_vnpay_webhook(params: dict):
         )
         return ({"RspCode": "04", "Message": "Invalid amount"}, 200)
 
-    is_success = (rsp_code == "00") and (txn_status in (None, "", "00"))
+    is_success = is_vnpay_success(rsp_code, txn_status)
 
     # Only mark payment completed when VNPAY reports success.
     if not is_success:
@@ -471,7 +560,7 @@ def s_admin_query_vnpay(payment_id: str, payload: Optional[dict] = None) -> dict
     pay_date = resp.get("vnp_PayDate")
 
     # Update local status if VNPAY confirms success.
-    if rsp_code == "00" and (txn_status in (None, "", "00")):
+    if is_vnpay_success(rsp_code, txn_status):
         if getattr(payment, "status", None) != "completed":
             payment.status = "completed"
             if pay_date:
