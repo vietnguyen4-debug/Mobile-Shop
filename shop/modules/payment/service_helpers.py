@@ -34,28 +34,6 @@ def _normalize_currency(value: Any) -> str:
         raise AppError("Currency is too long", 400, name="INVALID_CURRENCY")
     return currency
 
-def _parse_paid_at(value: Any) -> datetime:
-    if value is None:
-        return datetime.now(timezone.utc)
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-    if isinstance(value, str):
-        cleaned = value.strip()
-        if not cleaned:
-            return datetime.now(timezone.utc)
-        if cleaned.endswith("Z"):
-            cleaned = cleaned[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(cleaned)
-        except ValueError:
-            raise AppError("paid_at must be an ISO formatted datetime", 400, name="INVALID_PAID_AT")
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    raise AppError("paid_at must be an ISO formatted datetime", 400, name="INVALID_PAID_AT")
-
 
 def _vnpay_hash(params: dict, secret: str) -> str:
     items = [
@@ -107,6 +85,24 @@ def vnpay_pending_timeout_seconds() -> int:
 
 def vnpay_on_demand_querydr_min_age_seconds() -> int:
     return max(0, _env_int("VNPAY_ON_DEMAND_QUERYDR_MIN_AGE_SECONDS", 30))
+
+
+def parse_vnpay_pay_date_utc(pay_date: Any) -> datetime | None:
+    """
+    Parse VNPAY pay date (YYYYMMDDHHMMSS, Asia/Ho_Chi_Minh) to UTC datetime.
+    Returns None if parsing fails.
+    """
+    if pay_date is None:
+        return None
+    raw = str(pay_date).strip()
+    if not raw:
+        return None
+    try:
+        vn_tz = timezone(timedelta(hours=7))
+        parsed_local = datetime.strptime(raw, "%Y%m%d%H%M%S").replace(tzinfo=vn_tz)
+        return parsed_local.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 def vnpay_querydr(

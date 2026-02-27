@@ -1,4 +1,5 @@
 import os
+from html import escape
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from flask import request, redirect
@@ -165,15 +166,15 @@ def r_vnpay_return():
         "</head>"
         "<body>"
         "<h1>Payment processed</h1>"
-        f"<p>{message}</p>"
+        f"<p>{escape(message)}</p>"
         "<p>(Trang này chỉ dùng tạm cho môi trường sandbox; "
         "trong production sẽ redirect về frontend.)</p>"
-        f"<p><strong>vnp_TxnRef:</strong> {txn_ref}</p>"
-        f"<p><strong>vnp_ResponseCode:</strong> {rsp_code}</p>"
-        f"<p><strong>vnp_TransactionStatus:</strong> {txn_status}</p>"
-        f"<p><strong>status:</strong> {ux_status}</p>"
-        f"<p><strong>signature_valid:</strong> {signature_valid}</p>"
-        f"<p><strong>local_payment_status:</strong> {payment_status}</p>"
+        f"<p><strong>vnp_TxnRef:</strong> {escape(str(txn_ref))}</p>"
+        f"<p><strong>vnp_ResponseCode:</strong> {escape(str(rsp_code))}</p>"
+        f"<p><strong>vnp_TransactionStatus:</strong> {escape(str(txn_status))}</p>"
+        f"<p><strong>status:</strong> {escape(str(ux_status))}</p>"
+        f"<p><strong>signature_valid:</strong> {escape(str(signature_valid))}</p>"
+        f"<p><strong>local_payment_status:</strong> {escape(str(payment_status))}</p>"
         "</body>"
         "</html>"
     )

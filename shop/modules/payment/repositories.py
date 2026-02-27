@@ -3,7 +3,6 @@ from typing import List, Optional
 from bson import ObjectId
 
 from .models import Payment
-from datetime import datetime
 
 
 def payment_create(data: dict) -> Payment:
@@ -38,18 +37,3 @@ def payment_list_pending_vnpay(*, before=None, limit: int = 100) -> List[Payment
     if before is not None:
         qs = qs.filter(created_at__lte=before)
     return list(qs.limit(limit))
-
-
-def payment_list_pending_by_provider(
-    *,
-    provider: str,
-    method: str | None = None,
-    before: datetime | None = None,
-    limit: int = 100,
-) -> List[Payment]:
-    qs = Payment.objects(status="pending", provider=provider)
-    if method:
-        qs = qs.filter(method=method)
-    if before:
-        qs = qs.filter(created_at__lte=before)
-    return list(qs.order_by("created_at").limit(limit))

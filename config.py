@@ -22,10 +22,10 @@ class DevConfig:
         os.environ.get("CANCEL_EXPIRED_CHECKOUTS_INTERVAL_SECONDS", 600)
     )
     VNPAY_RECONCILE_PENDING_INTERVAL_SECONDS = int(
-        os.environ.get("VNPAY_RECONCILE_PENDING_INTERVAL_SECONDS", 0)
+        os.environ.get("VNPAY_RECONCILE_PENDING_INTERVAL_SECONDS", 60)
     )
     VNPAY_RECONCILE_MIN_AGE_SECONDS = int(
-        os.environ.get("VNPAY_RECONCILE_MIN_AGE_SECONDS", 300)
+        os.environ.get("VNPAY_RECONCILE_MIN_AGE_SECONDS", 120)
     )
     CACHE_TYPE = os.environ.get("CACHE_TYPE", "RedisCache")
     CACHE_DEFAULT_TIMEOUT = int(os.environ.get("CACHE_DEFAULT_TIMEOUT", 300))
